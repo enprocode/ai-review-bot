@@ -69,7 +69,7 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
         patch = f.patch or ""
         block = f"\n\n=== {f.filename} ===\n{patch}"
         if used + len(block) > max_diff_chars:
-            break
+            continue
         patches.append(block)
         used += len(block)
     diff_snippet = "".join(patches) if patches else "(変更差分は取得できませんでした)"
