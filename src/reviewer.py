@@ -6,7 +6,7 @@ import yaml
 import time
 import fnmatch
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 from github import Github, Auth
 import argparse
@@ -164,6 +164,30 @@ def normalize_findings(data: Any, max_findings: int) -> List[Dict[str, Any]]:
             "fix": (item.get("fix") or "").strip(),
         })
     return findings
+
+
+def parse_findings_from_text(raw_text: str, max_findings: int) -> Tuple[List[Dict[str, Any]], bool]:
+    """
+    モデル出力テキストから指摘リストを抽出する。
+    まずテキスト全体がJSONであることを試み、失敗したら ```json ``` ブロックを探す。
+    """
+    stripped = (raw_text or "").strip()
+    if stripped:
+        try:
+            data = json.loads(stripped)
+            return normalize_findings(data, max_findings), True
+        except Exception:
+            logging.debug("生テキストのJSONパースに失敗しました。フェンス付きブロックを探索します。")
+
+    json_block = extract_json_block(raw_text or "")
+    if json_block:
+        try:
+            data = json.loads(json_block)
+            return normalize_findings(data, max_findings), True
+        except Exception as exc:
+            logging.warning("```json``` ブロックのパースに失敗しました: %s", exc)
+
+    return [], False
 
 
 def filter_files(files, include_globs, exclude_globs, max_files):
@@ -395,11 +419,14 @@ def main():
     client = OpenAI(api_key=openai_key)
 
     def format_message(role: str, text: str) -> Dict[str, Any]:
+        block_type = "input_text"
+        if role == "assistant":
+            block_type = "output_text"
         return {
             "role": role,
             "content": [
                 {
-                    "type": "text",
+                    "type": block_type,
                     "text": text,
                 }
             ],
@@ -445,21 +472,12 @@ def main():
     if logging.getLogger().isEnabledFor(logging.DEBUG):
         logging.debug("OpenAI raw response: %r", resp)
 
-    findings = []
-    parsed_successfully = False
-    json_block = extract_json_block(raw_text)
-    if json_block:
-        try:
-            data = json.loads(json_block)
-            findings = normalize_findings(data, max_findings)
-            parsed_successfully = True
-            logging.info("JSON ブロックを解析しました。指摘数: %s", len(findings))
-        except Exception as exc:
-            logging.warning("JSONパースに失敗しました: %s", exc)
-            findings = []
+    findings, parsed_successfully = parse_findings_from_text(raw_text, max_findings)
+    if parsed_successfully:
+        logging.info("モデル出力から %s 件の指摘を抽出しました。", len(findings))
     else:
         snippet = (raw_text[:300] + "…") if raw_text and len(raw_text) > 300 else (raw_text or "(空)")
-        logging.warning("モデル出力から JSON ブロックを検出できませんでした。出力(先頭300文字): %s", snippet)
+        logging.warning("モデル出力から有効な指摘を抽出できませんでした。出力(先頭300文字): %s", snippet)
 
     if not findings:
         review_body = build_no_findings_body(raw_text, parsed_successfully)

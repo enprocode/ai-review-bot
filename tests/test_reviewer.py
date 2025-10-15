@@ -1,3 +1,4 @@
+import json
 import unittest
 from types import SimpleNamespace
 
@@ -120,6 +121,26 @@ class ExtractOutputTextTests(unittest.TestCase):
     def test_returns_empty_string_when_no_text(self):
         resp = {"output": [{"content": [{}]}]}
         self.assertEqual(reviewer.extract_output_text(resp), "")
+
+
+class ParseFindingsTests(unittest.TestCase):
+    def test_parses_plain_json_string(self):
+        raw = json.dumps([{
+            "severity": "major",
+            "file": "foo.py",
+            "line": 10,
+            "title": "Issue",
+            "detail": "Fix it",
+        }])
+        findings, parsed = reviewer.parse_findings_from_text(raw, max_findings=5)
+        self.assertTrue(parsed)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "MAJOR")
+
+    def test_returns_false_when_no_json(self):
+        findings, parsed = reviewer.parse_findings_from_text("plain text", max_findings=5)
+        self.assertFalse(parsed)
+        self.assertEqual(findings, [])
 
 
 if __name__ == "__main__":
