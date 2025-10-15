@@ -419,7 +419,17 @@ def main():
         request_kwargs["max_output_tokens"] = max_output_tokens
     raw_text = ""
     for attempt in range(1, 4):
-        resp = retry(lambda: client.responses.create(**request_kwargs))
+        def _call_openai():
+            try:
+                return client.responses.create(**request_kwargs)
+            except TypeError as exc:
+                if "response_format" in str(exc):
+                    logging.warning("response_format パラメータがサポートされていないため、通常のテキスト応答にフォールバックします。")
+                    request_kwargs.pop("response_format", None)
+                    return client.responses.create(**request_kwargs)
+                raise
+
+        resp = retry(_call_openai)
         raw_text = extract_output_text(resp)
         if raw_text.strip():
             break
