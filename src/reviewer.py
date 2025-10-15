@@ -360,7 +360,14 @@ def main():
             findings = []
 
     if not findings:
-        retry(lambda: pr.create_review(body=f"### 🤖 AIレビューBot\n\n{raw_text or 'レビュー内容を生成できませんでした。'}", event="COMMENT"))
+        message = (raw_text or "").strip()
+        lgtm_tail = "LGTM! 🎉 特に指摘はありません。"
+        body_parts = ["### 🤖 AIレビューBot"]
+        if message:
+            body_parts.append(message)
+        body_parts.append(lgtm_tail)
+        review_body = "\n\n".join(body_parts)
+        retry(lambda: pr.create_review(body=review_body, event="COMMENT"))
         return
 
     if enable_inline:
