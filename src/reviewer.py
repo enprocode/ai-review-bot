@@ -393,11 +393,28 @@ def main():
 
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
     client = OpenAI(api_key=openai_key)
-    messages: List[Dict[str, str]] = []
+
+    def format_message(role: str, text: str) -> Dict[str, Any]:
+        return {
+            "role": role,
+            "content": [
+                {
+                    "type": "text",
+                    "text": text,
+                }
+            ],
+        }
+
+    messages: List[Dict[str, Any]] = []
     if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt_text})
-    request_kwargs: Dict[str, Any] = {"model": model, "input": messages}
+        messages.append(format_message("system", system_prompt))
+    messages.append(format_message("user", prompt_text))
+
+    request_kwargs: Dict[str, Any] = {
+        "model": model,
+        "input": messages,
+        "response_format": {"type": "json_object"},
+    }
     if max_output_tokens:
         request_kwargs["max_output_tokens"] = max_output_tokens
     raw_text = ""

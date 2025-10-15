@@ -25,4 +25,4 @@ max_files: 200
 max_diff_chars: 8000
 max_findings: 50
 batch_size: 20
-log_level: INFO
+log_level: DEBUG
