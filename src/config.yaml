@@ -10,7 +10,7 @@ openai_api_key: ${OPENAI_API_KEY}
 github_token: ${GITHUB_TOKEN}
 
 # ==== モデル設定 ====
-model: gpt-5
+model: gpt-5-codex
 
 # ==== 動作スイッチ ====
 enable_inline: true         # true: インラインコメント / false: まとめコメントのみ
