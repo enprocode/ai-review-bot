@@ -24,7 +24,7 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository) }}
 
     # ✅ secrets: inherit を避け、明示的に必要なシークレットのみ渡す
-    uses: enprocode/ai-review-bot/.github/workflows/ai-review.yml@main
+    uses: ./.github/workflows/ai-review.yml
 
     with:
       pr_number: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
