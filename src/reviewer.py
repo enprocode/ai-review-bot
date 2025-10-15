@@ -6,7 +6,7 @@ import yaml
 import time
 import fnmatch
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from openai import OpenAI
 from github import Github, Auth
 import argparse
