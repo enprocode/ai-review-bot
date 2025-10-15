@@ -5,6 +5,7 @@ import textwrap
 import yaml
 import time
 import fnmatch
+import logging
 from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 from github import Github, Auth
@@ -111,7 +112,7 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
     style_directive = f"\nレビューは「{style}」なトーンでお願いします。" if style else ""
 
     return textwrap.dedent(f"""
-    あなたは熟練したPythonエンジニアとして、以下のPR差分をレビューしてください。{style_directive}
+    あなたは熟練したエンジニアとして、以下のPR差分をレビューしてください。{style_directive}
     出力は必ず ```json フェンス内に JSON配列のみ``` で返してください。
 
     JSONスキーマ:
@@ -343,6 +344,10 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config()
+    log_level_name = str(cfg.get("log_level") or "INFO").upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+    logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
+    logging.info("AIレビューを開始します: repo=%s, pr=%s", args.repo, args.pr)
     openai_key = cfg.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
     gh_token = cfg.get("github_token") or os.getenv("GITHUB_TOKEN")
     if not openai_key:
@@ -374,13 +379,17 @@ def main():
 
     # ドラフトPRはスキップ
     if getattr(pr, "draft", False):
+        logging.info("PR #%s はドラフトのためレビューをスキップします。", args.pr)
         return
 
     files_all = list(pr.get_files())
     files = filter_files(files_all, include_globs, exclude_globs, max_files)
     if not files:
+        logging.info("対象ファイルが見つからなかったためレビューコメントを投稿します。")
         retry(lambda: pr.create_review(body="### 🤖 AIレビューBot\n\n対象ファイルがありません。", event="COMMENT"))
         return
+
+    logging.info("レビュー対象ファイル数: %s (取得 %s, 上限 %s)", len(files), len(files_all), max_files)
 
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
     client = OpenAI(api_key=openai_key)
@@ -402,17 +411,25 @@ def main():
             data = json.loads(json_block)
             findings = normalize_findings(data, max_findings)
             parsed_successfully = True
-        except Exception:
+            logging.info("JSON ブロックを解析しました。指摘数: %s", len(findings))
+        except Exception as exc:
+            logging.warning("JSONパースに失敗しました: %s", exc)
             findings = []
+    else:
+        snippet = (raw_text[:300] + "…") if raw_text and len(raw_text) > 300 else (raw_text or "(空)")
+        logging.warning("モデル出力から JSON ブロックを検出できませんでした。出力(先頭300文字): %s", snippet)
 
     if not findings:
         review_body = build_no_findings_body(raw_text, parsed_successfully)
         retry(lambda: pr.create_review(body=review_body, event="COMMENT"))
+        logging.info("指摘なしコメントを投稿しました。（parsed=%s）", parsed_successfully)
         return
 
     if enable_inline:
+        logging.info("インラインコメントモードで %s 件の指摘を投稿します。", len(findings))
         post_inline_reviews(pr, findings, batch_size)
     else:
+        logging.info("まとめコメントモードで %s 件の指摘を投稿します。", len(findings))
         bullets = []
         for f in findings:
             where = f'`{f["file"]}`' + (f' L{f["line"]}' if f["line"] else "")
