@@ -408,8 +408,13 @@ def main():
             break
         logging.warning("OpenAIレスポンスが空でした。（試行 %s/3）", attempt)
     else:
-        logging.error("OpenAIレスポンスが3回連続で空でした。処理を中断します。")
-        raise RuntimeError("OpenAI responses were empty after multiple attempts.")
+        logging.error("OpenAIレスポンスが3回連続で空でした。レビュー結果を投稿できません。")
+        fallback_body = build_no_findings_body(
+            "モデルから有効な応答が得られませんでした。（3回再試行しても空のレスポンス）",
+            parsed_successfully=False,
+        )
+        retry(lambda: pr.create_review(body=fallback_body, event="COMMENT"))
+        return
     if logging.getLogger().isEnabledFor(logging.DEBUG):
         logging.debug("OpenAI raw response: %r", resp)
 
