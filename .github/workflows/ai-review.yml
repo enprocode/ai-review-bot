@@ -51,6 +51,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install --upgrade -r ai-review-bot/requirements.txt
 
+      - name: Run unit tests
+        working-directory: ai-review-bot
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests
+
       - name: Generate GitHub App token
         id: app-token
         uses: tibdex/github-app-token@v2
