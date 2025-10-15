@@ -5,6 +5,7 @@ import textwrap
 import yaml
 import time
 import fnmatch
+import logging
 from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 from github import Github, Auth
@@ -22,6 +23,36 @@ SEVERITY_EMOJI = {
     "SUGGESTION": "🟢",
 }
 SEVERITY_ORDER = ["SUGGESTION", "MINOR", "MAJOR", "CRITICAL"]
+
+
+def _get(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def extract_output_text(resp: Any) -> str:
+    """
+    OpenAI Responses API の返却オブジェクトからテキストを抽出する。
+    output_text が無い場合も想定し、content の text を走査する。
+    """
+    text = _get(resp, "output_text")
+    if text:
+        return str(text)
+    output = _get(resp, "output")
+    parts: List[str] = []
+    if output:
+        for item in output:
+            content = _get(item, "content")
+            if not content:
+                continue
+            for block in content:
+                piece = _get(block, "text")
+                if piece:
+                    parts.append(str(piece))
+    if parts:
+        return "\n".join(parts)
+    return ""
 
 
 def load_config() -> dict:
@@ -68,15 +99,20 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
     for f in files:
         patch = f.patch or ""
         block = f"\n\n=== {f.filename} ===\n{patch}"
-        if used + len(block) > max_diff_chars:
-            continue
+        block_len = len(block)
+        if used + block_len > max_diff_chars:
+            remaining = max_diff_chars - used
+            if remaining > 0:
+                patches.append(block[:remaining])
+                used += remaining
+            break
         patches.append(block)
-        used += len(block)
+        used += block_len
     diff_snippet = "".join(patches) if patches else "(変更差分は取得できませんでした)"
     style_directive = f"\nレビューは「{style}」なトーンでお願いします。" if style else ""
 
     return textwrap.dedent(f"""
-    あなたは熟練したPythonエンジニアとして、以下のPR差分をレビューしてください。{style_directive}
+    あなたは熟練したエンジニアとして、以下のPR差分をレビューしてください。{style_directive}
     出力は必ず ```json フェンス内に JSON配列のみ``` で返してください。
 
     JSONスキーマ:
@@ -128,6 +164,30 @@ def normalize_findings(data: Any, max_findings: int) -> List[Dict[str, Any]]:
             "fix": (item.get("fix") or "").strip(),
         })
     return findings
+
+
+def parse_findings_from_text(raw_text: str, max_findings: int) -> Tuple[List[Dict[str, Any]], bool]:
+    """
+    モデル出力テキストから指摘リストを抽出する。
+    まずテキスト全体がJSONであることを試み、失敗したら ```json ``` ブロックを探す。
+    """
+    stripped = (raw_text or "").strip()
+    if stripped:
+        try:
+            data = json.loads(stripped)
+            return normalize_findings(data, max_findings), True
+        except Exception:
+            logging.debug("生テキストのJSONパースに失敗しました。フェンス付きブロックを探索します。")
+
+    json_block = extract_json_block(raw_text or "")
+    if json_block:
+        try:
+            data = json.loads(json_block)
+            return normalize_findings(data, max_findings), True
+        except Exception as exc:
+            logging.warning("```json``` ブロックのパースに失敗しました: %s", exc)
+
+    return [], False
 
 
 def filter_files(files, include_globs, exclude_globs, max_files):
@@ -290,6 +350,16 @@ def maybe_fail_job(findings, fail_level):
         raise SystemExit(1)
 
 
+def build_no_findings_body(raw_text: str, parsed_successfully: bool) -> str:
+    header = "### 🤖 AIレビューBot"
+    if parsed_successfully:
+        return f"{header}\n\nLGTM! 🎉 特に指摘はありません。"
+    message = (raw_text or "").strip()
+    if not message:
+        message = "レビュー内容を生成できませんでした。（モデルから有効な応答が得られませんでした）"
+    return f"{header}\n\n{message}"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
@@ -298,6 +368,10 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config()
+    log_level_name = str(cfg.get("log_level") or "INFO").upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+    logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
+    logging.info("AIレビューを開始します: repo=%s, pr=%s", args.repo, args.pr)
     openai_key = cfg.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
     gh_token = cfg.get("github_token") or os.getenv("GITHUB_TOKEN")
     if not openai_key:
@@ -329,43 +403,93 @@ def main():
 
     # ドラフトPRはスキップ
     if getattr(pr, "draft", False):
+        logging.info("PR #%s はドラフトのためレビューをスキップします。", args.pr)
         return
 
     files_all = list(pr.get_files())
     files = filter_files(files_all, include_globs, exclude_globs, max_files)
     if not files:
+        logging.info("対象ファイルが見つからなかったためレビューコメントを投稿します。")
         retry(lambda: pr.create_review(body="### 🤖 AIレビューBot\n\n対象ファイルがありません。", event="COMMENT"))
         return
 
+    logging.info("レビュー対象ファイル数: %s (取得 %s, 上限 %s)", len(files), len(files_all), max_files)
+
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
     client = OpenAI(api_key=openai_key)
+
+    def format_message(role: str, text: str) -> Dict[str, Any]:
+        block_type = "input_text"
+        if role == "assistant":
+            block_type = "output_text"
+        return {
+            "role": role,
+            "content": [
+                {
+                    "type": block_type,
+                    "text": text,
+                }
+            ],
+        }
+
+    messages: List[Dict[str, Any]] = []
+    if system_prompt:
+        messages.append(format_message("system", system_prompt))
+    messages.append(format_message("user", prompt_text))
+
     request_kwargs: Dict[str, Any] = {
         "model": model,
-        "input": (
-            [{"role": "system", "content": system_prompt}] if system_prompt else []
-        ) + [{"role": "user", "content": prompt_text}],
+        "input": messages,
+        "response_format": {"type": "json_object"},
     }
     if max_output_tokens:
         request_kwargs["max_output_tokens"] = max_output_tokens
-    resp = retry(lambda: client.responses.create(**request_kwargs))
-    raw_text = getattr(resp, "output_text", "") or ""
+    raw_text = ""
+    for attempt in range(1, 4):
+        def _call_openai():
+            try:
+                return client.responses.create(**request_kwargs)
+            except TypeError as exc:
+                if "response_format" in str(exc):
+                    logging.warning("response_format パラメータがサポートされていないため、通常のテキスト応答にフォールバックします。")
+                    request_kwargs.pop("response_format", None)
+                    return client.responses.create(**request_kwargs)
+                raise
 
-    findings = []
-    json_block = extract_json_block(raw_text)
-    if json_block:
-        try:
-            data = json.loads(json_block)
-            findings = normalize_findings(data, max_findings)
-        except Exception:
-            findings = []
+        resp = retry(_call_openai)
+        raw_text = extract_output_text(resp)
+        if raw_text.strip():
+            break
+        logging.warning("OpenAIレスポンスが空でした。（試行 %s/3）", attempt)
+    else:
+        logging.error("OpenAIレスポンスが3回連続で空でした。レビュー結果を投稿できません。")
+        fallback_body = build_no_findings_body(
+            "モデルから有効な応答が得られませんでした。（3回再試行しても空のレスポンス）",
+            parsed_successfully=False,
+        )
+        retry(lambda: pr.create_review(body=fallback_body, event="COMMENT"))
+        return
+    if logging.getLogger().isEnabledFor(logging.DEBUG):
+        logging.debug("OpenAI raw response: %r", resp)
+
+    findings, parsed_successfully = parse_findings_from_text(raw_text, max_findings)
+    if parsed_successfully:
+        logging.info("モデル出力から %s 件の指摘を抽出しました。", len(findings))
+    else:
+        snippet = (raw_text[:300] + "…") if raw_text and len(raw_text) > 300 else (raw_text or "(空)")
+        logging.warning("モデル出力から有効な指摘を抽出できませんでした。出力(先頭300文字): %s", snippet)
 
     if not findings:
-        retry(lambda: pr.create_review(body=f"### 🤖 AIレビューBot\n\n{raw_text or 'レビュー内容を生成できませんでした。'}", event="COMMENT"))
+        review_body = build_no_findings_body(raw_text, parsed_successfully)
+        retry(lambda: pr.create_review(body=review_body, event="COMMENT"))
+        logging.info("指摘なしコメントを投稿しました。（parsed=%s）", parsed_successfully)
         return
 
     if enable_inline:
+        logging.info("インラインコメントモードで %s 件の指摘を投稿します。", len(findings))
         post_inline_reviews(pr, findings, batch_size)
     else:
+        logging.info("まとめコメントモードで %s 件の指摘を投稿します。", len(findings))
         bullets = []
         for f in findings:
             where = f'`{f["file"]}`' + (f' L{f["line"]}' if f["line"] else "")

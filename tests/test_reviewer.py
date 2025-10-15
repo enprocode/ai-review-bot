@@ -1,3 +1,4 @@
+import json
 import unittest
 from types import SimpleNamespace
 
@@ -69,6 +70,77 @@ class BuildPromptTests(unittest.TestCase):
             style=None,
         )
         self.assertNotIn("トーンでお願いします。", prompt)
+
+    def test_diff_is_truncated_when_overflow(self):
+        long_patch = "+line\n" * 100
+        file_stub = SimpleNamespace(filename="foo.py", patch=long_patch)
+        prompt = reviewer.build_prompt(
+            [file_stub],
+            user_prompt="",
+            max_diff_chars=50,
+            style=None,
+        )
+        self.assertIn("=== foo.py ===", prompt)
+        self.assertLess(prompt.count("+line"), 100)
+
+
+class NoFindingsBodyTests(unittest.TestCase):
+    def test_success_path_returns_lgtm_only(self):
+        body = reviewer.build_no_findings_body("", True)
+        self.assertIn("LGTM! 🎉 特に指摘はありません。", body)
+        self.assertNotIn("レビュー内容を生成できませんでした。", body)
+
+    def test_failure_path_preserves_message(self):
+        body = reviewer.build_no_findings_body("エラーが発生しました", False)
+        self.assertIn("エラーが発生しました", body)
+        self.assertNotIn("LGTM! 🎉 特に指摘はありません。", body)
+
+    def test_failure_path_handles_empty_message(self):
+        body = reviewer.build_no_findings_body("", False)
+        self.assertIn("モデルから有効な応答が得られませんでした", body)
+
+
+class ExtractOutputTextTests(unittest.TestCase):
+    def test_uses_output_text_when_available(self):
+        resp = SimpleNamespace(output_text="hello")
+        self.assertEqual(reviewer.extract_output_text(resp), "hello")
+
+    def test_falls_back_to_nested_content(self):
+        resp = {
+            "output": [
+                {
+                    "content": [
+                        {"text": "first"},
+                        {"text": "second"},
+                    ]
+                }
+            ]
+        }
+        self.assertEqual(reviewer.extract_output_text(resp), "first\nsecond")
+
+    def test_returns_empty_string_when_no_text(self):
+        resp = {"output": [{"content": [{}]}]}
+        self.assertEqual(reviewer.extract_output_text(resp), "")
+
+
+class ParseFindingsTests(unittest.TestCase):
+    def test_parses_plain_json_string(self):
+        raw = json.dumps([{
+            "severity": "major",
+            "file": "foo.py",
+            "line": 10,
+            "title": "Issue",
+            "detail": "Fix it",
+        }])
+        findings, parsed = reviewer.parse_findings_from_text(raw, max_findings=5)
+        self.assertTrue(parsed)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "MAJOR")
+
+    def test_returns_false_when_no_json(self):
+        findings, parsed = reviewer.parse_findings_from_text("plain text", max_findings=5)
+        self.assertFalse(parsed)
+        self.assertEqual(findings, [])
 
 
 if __name__ == "__main__":

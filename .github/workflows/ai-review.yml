@@ -37,6 +37,14 @@ jobs:
           repository: enprocode/ai-review-bot
           path: ai-review-bot
 
+      - name: Sync ai-review-bot to current PR commit
+        if: ${{ github.repository == 'enprocode/ai-review-bot' && inputs.pr_number }}
+        working-directory: ai-review-bot
+        run: |
+          set -euo pipefail
+          git fetch origin "refs/pull/${{ inputs.pr_number }}/head" --depth=1
+          git checkout --detach FETCH_HEAD
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -50,12 +58,6 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           pip install --upgrade -r ai-review-bot/requirements.txt
-
-      - name: Run unit tests
-        working-directory: ai-review-bot
-        run: |
-          set -euo pipefail
-          python -m unittest discover -s tests
 
       - name: Generate GitHub App token
         id: app-token

@@ -1,4 +1,5 @@
 # 🤖 AI Review Bot
+[![Self AI Review](https://github.com/enprocode/ai-review-bot/actions/workflows/self-ai-review.yml/badge.svg)](https://github.com/enprocode/ai-review-bot/actions/workflows/self-ai-review.yml)
 
 GitHub Actions ベースの **AIコードレビューBot** です。  
 Pull Request を自動解析し、設計・可読性・バグリスクなどをAIがコメントします。  
