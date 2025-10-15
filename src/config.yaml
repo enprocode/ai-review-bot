@@ -1,0 +1,27 @@
+# ==== レビューの基本方針（必要なら調整） ====
+system_prompt: |
+  You are a senior software engineer doing code reviews.
+  Focus on correctness, security, readability, and tests.
+style: concise
+max_tokens: 800
+
+# ==== 認証（環境変数参照のまま） ====
+openai_api_key: ${OPENAI_API_KEY}
+github_token: ${GITHUB_TOKEN}
+
+# ==== モデル設定 ====
+model: gpt-5
+
+# ==== 動作スイッチ ====
+enable_inline: true         # true: インラインコメント / false: まとめコメントのみ
+fail_level: MAJOR           # CRITICAL/MAJOR/MINOR/SUGGESTION。しきい値以上でCI失敗。未設定なら無効
+
+# ==== 対象ファイルフィルタ ====
+include_globs: ["**/*.py", "**/*.yml", "**/*.yaml", "**/*.toml", "**/*.json"]
+exclude_globs: ["**/.venv/**", "**/dist/**", "**/build/**", "**/*.lock", "**/node_modules/**"]
+max_files: 200
+
+# ==== LLMへ渡す情報量のリミット ====
+max_diff_chars: 8000
+max_findings: 50
+batch_size: 20

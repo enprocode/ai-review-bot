@@ -1,0 +1,79 @@
+name: AI Review Bot (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      review_prompt:
+        required: false
+        type: string
+        default: ""
+      pr_number:
+        required: false
+        type: string
+    secrets:
+      OPENAI_API_KEY:
+        required: true
+      GH_APP_ID:
+        required: true
+      GH_APP_PRIVATE_KEY:
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai_review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          path: caller
+
+      - name: Checkout ai-review-bot
+        uses: actions/checkout@v4
+        with:
+          repository: enprocode/ai-review-bot
+          path: ai-review-bot
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          # 🟡 pipキャッシュを requirements に紐付け
+          cache-dependency-path: ai-review-bot/requirements.txt
+
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install --upgrade -r ai-review-bot/requirements.txt
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: tibdex/github-app-token@v2
+        with:
+          app_id: ${{ secrets.GH_APP_ID }}
+          private_key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      - name: Run AI Review
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER="${{ inputs.pr_number }}"
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER="$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")"
+          fi
+          if [ -z "$PR_NUMBER" ]; then
+            echo "ERROR: PR number is not provided (neither inputs.pr_number nor pull_request event)."
+            exit 1
+          fi
+
+          python ai-review-bot/src/reviewer.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" \
+            --prompt "${{ inputs.review_prompt }}"
