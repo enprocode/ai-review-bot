@@ -400,8 +400,18 @@ def main():
     request_kwargs: Dict[str, Any] = {"model": model, "input": messages}
     if max_output_tokens:
         request_kwargs["max_output_tokens"] = max_output_tokens
-    resp = retry(lambda: client.responses.create(**request_kwargs))
-    raw_text = extract_output_text(resp)
+    raw_text = ""
+    for attempt in range(1, 4):
+        resp = retry(lambda: client.responses.create(**request_kwargs))
+        raw_text = extract_output_text(resp)
+        if raw_text.strip():
+            break
+        logging.warning("OpenAIレスポンスが空でした。（試行 %s/3）", attempt)
+    else:
+        logging.error("OpenAIレスポンスが3回連続で空でした。処理を中断します。")
+        raise RuntimeError("OpenAI responses were empty after multiple attempts.")
+    if logging.getLogger().isEnabledFor(logging.DEBUG):
+        logging.debug("OpenAI raw response: %r", resp)
 
     findings = []
     parsed_successfully = False
