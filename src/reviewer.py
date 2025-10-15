@@ -68,10 +68,15 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
     for f in files:
         patch = f.patch or ""
         block = f"\n\n=== {f.filename} ===\n{patch}"
-        if used + len(block) > max_diff_chars:
-            continue
+        block_len = len(block)
+        if used + block_len > max_diff_chars:
+            remaining = max_diff_chars - used
+            if remaining > 0:
+                patches.append(block[:remaining])
+                used += remaining
+            break
         patches.append(block)
-        used += len(block)
+        used += block_len
     diff_snippet = "".join(patches) if patches else "(変更差分は取得できませんでした)"
     style_directive = f"\nレビューは「{style}」なトーンでお願いします。" if style else ""
 
@@ -290,6 +295,14 @@ def maybe_fail_job(findings, fail_level):
         raise SystemExit(1)
 
 
+def build_no_findings_body(raw_text: str, parsed_successfully: bool) -> str:
+    header = "### 🤖 AIレビューBot"
+    if parsed_successfully:
+        return f"{header}\n\nLGTM! 🎉 特に指摘はありません。"
+    message = (raw_text or "レビュー内容を生成できませんでした。").strip()
+    return f"{header}\n\n{message}"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
@@ -339,34 +352,29 @@ def main():
 
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
     client = OpenAI(api_key=openai_key)
-    request_kwargs: Dict[str, Any] = {
-        "model": model,
-        "input": (
-            [{"role": "system", "content": system_prompt}] if system_prompt else []
-        ) + [{"role": "user", "content": prompt_text}],
-    }
+    messages: List[Dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt_text})
+    request_kwargs: Dict[str, Any] = {"model": model, "input": messages}
     if max_output_tokens:
         request_kwargs["max_output_tokens"] = max_output_tokens
     resp = retry(lambda: client.responses.create(**request_kwargs))
     raw_text = getattr(resp, "output_text", "") or ""
 
     findings = []
+    parsed_successfully = False
     json_block = extract_json_block(raw_text)
     if json_block:
         try:
             data = json.loads(json_block)
             findings = normalize_findings(data, max_findings)
+            parsed_successfully = True
         except Exception:
             findings = []
 
     if not findings:
-        message = (raw_text or "").strip()
-        lgtm_tail = "LGTM! 🎉 特に指摘はありません。"
-        body_parts = ["### 🤖 AIレビューBot"]
-        if message:
-            body_parts.append(message)
-        body_parts.append(lgtm_tail)
-        review_body = "\n\n".join(body_parts)
+        review_body = build_no_findings_body(raw_text, parsed_successfully)
         retry(lambda: pr.create_review(body=review_body, event="COMMENT"))
         return
 

@@ -70,6 +70,30 @@ class BuildPromptTests(unittest.TestCase):
         )
         self.assertNotIn("トーンでお願いします。", prompt)
 
+    def test_diff_is_truncated_when_overflow(self):
+        long_patch = "+line\n" * 100
+        file_stub = SimpleNamespace(filename="foo.py", patch=long_patch)
+        prompt = reviewer.build_prompt(
+            [file_stub],
+            user_prompt="",
+            max_diff_chars=50,
+            style=None,
+        )
+        self.assertIn("=== foo.py ===", prompt)
+        self.assertLess(prompt.count("+line"), 100)
+
+
+class NoFindingsBodyTests(unittest.TestCase):
+    def test_success_path_returns_lgtm_only(self):
+        body = reviewer.build_no_findings_body("", True)
+        self.assertIn("LGTM! 🎉 特に指摘はありません。", body)
+        self.assertNotIn("レビュー内容を生成できませんでした。", body)
+
+    def test_failure_path_preserves_message(self):
+        body = reviewer.build_no_findings_body("エラーが発生しました", False)
+        self.assertIn("エラーが発生しました", body)
+        self.assertNotIn("LGTM! 🎉 特に指摘はありません。", body)
+
 
 if __name__ == "__main__":
     unittest.main()
