@@ -24,6 +24,36 @@ SEVERITY_EMOJI = {
 SEVERITY_ORDER = ["SUGGESTION", "MINOR", "MAJOR", "CRITICAL"]
 
 
+def _get(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def extract_output_text(resp: Any) -> str:
+    """
+    OpenAI Responses API の返却オブジェクトからテキストを抽出する。
+    output_text が無い場合も想定し、content の text を走査する。
+    """
+    text = _get(resp, "output_text")
+    if text:
+        return str(text)
+    output = _get(resp, "output")
+    parts: List[str] = []
+    if output:
+        for item in output:
+            content = _get(item, "content")
+            if not content:
+                continue
+            for block in content:
+                piece = _get(block, "text")
+                if piece:
+                    parts.append(str(piece))
+    if parts:
+        return "\n".join(parts)
+    return ""
+
+
 def load_config() -> dict:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     cfg_path = os.path.join(base_dir, "config.yaml")
@@ -299,7 +329,9 @@ def build_no_findings_body(raw_text: str, parsed_successfully: bool) -> str:
     header = "### 🤖 AIレビューBot"
     if parsed_successfully:
         return f"{header}\n\nLGTM! 🎉 特に指摘はありません。"
-    message = (raw_text or "レビュー内容を生成できませんでした。").strip()
+    message = (raw_text or "").strip()
+    if not message:
+        message = "レビュー内容を生成できませんでした。（モデルから有効な応答が得られませんでした）"
     return f"{header}\n\n{message}"
 
 
@@ -360,7 +392,7 @@ def main():
     if max_output_tokens:
         request_kwargs["max_output_tokens"] = max_output_tokens
     resp = retry(lambda: client.responses.create(**request_kwargs))
-    raw_text = getattr(resp, "output_text", "") or ""
+    raw_text = extract_output_text(resp)
 
     findings = []
     parsed_successfully = False

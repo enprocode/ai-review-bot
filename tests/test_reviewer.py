@@ -94,6 +94,33 @@ class NoFindingsBodyTests(unittest.TestCase):
         self.assertIn("エラーが発生しました", body)
         self.assertNotIn("LGTM! 🎉 特に指摘はありません。", body)
 
+    def test_failure_path_handles_empty_message(self):
+        body = reviewer.build_no_findings_body("", False)
+        self.assertIn("モデルから有効な応答が得られませんでした", body)
+
+
+class ExtractOutputTextTests(unittest.TestCase):
+    def test_uses_output_text_when_available(self):
+        resp = SimpleNamespace(output_text="hello")
+        self.assertEqual(reviewer.extract_output_text(resp), "hello")
+
+    def test_falls_back_to_nested_content(self):
+        resp = {
+            "output": [
+                {
+                    "content": [
+                        {"text": "first"},
+                        {"text": "second"},
+                    ]
+                }
+            ]
+        }
+        self.assertEqual(reviewer.extract_output_text(resp), "first\nsecond")
+
+    def test_returns_empty_string_when_no_text(self):
+        resp = {"output": [{"content": [{}]}]}
+        self.assertEqual(reviewer.extract_output_text(resp), "")
+
 
 if __name__ == "__main__":
     unittest.main()
