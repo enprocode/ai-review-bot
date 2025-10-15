@@ -60,7 +60,7 @@ def to_inline_body(f: Dict[str, Any]) -> str:
     return "\n\n".join([p for p in parts if p]).strip()
 
 
-def build_prompt(files, user_prompt: str, max_diff_chars: int) -> str:
+def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[str] = None) -> str:
     filenames = [f.filename for f in files]
     file_list = "\n".join(f"- {name}" for name in filenames)
 
@@ -73,9 +73,10 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int) -> str:
         patches.append(block)
         used += len(block)
     diff_snippet = "".join(patches) if patches else "(変更差分は取得できませんでした)"
+    style_directive = f"\nレビューは「{style}」なトーンでお願いします。" if style else ""
 
     return textwrap.dedent(f"""
-    あなたは熟練したPythonエンジニアとして、以下のPR差分をレビューしてください。
+    あなたは熟練したPythonエンジニアとして、以下のPR差分をレビューしてください。{style_directive}
     出力は必ず ```json フェンス内に JSON配列のみ``` で返してください。
 
     JSONスキーマ:
@@ -235,7 +236,7 @@ def post_inline_reviews(pr, findings, batch_size):
     changed_paths = {f.filename for f in changed_files}
     pos_map = build_position_map(changed_files)
 
-    inline, fallback = [], []
+    inline, fallback_lines = [], []
 
     for f in findings:
         path, line = f["file"], f["line"]
@@ -252,12 +253,17 @@ def post_inline_reviews(pr, findings, batch_size):
         else:
             # フォールバック：まとめコメントに回す
             where = f'`{path}`' + (f' L{line}' if line else "")
-            fallback.append(
+            fallback_lines.append(
                 f'- {SEVERITY_EMOJI[f["severity"]]} **{f["severity"]}** {where} — {f["title"]}\n'
                 f'  {f["detail"]}' + (f'\n  **修正案:** {f["fix"]}' if f["fix"] else "")
             )
 
-    inline, fallback = dedup_existing(pr, inline, ["\n".join(fallback)] if fallback else [])
+    fallback_body = None
+    if fallback_lines:
+        body_content = "\n".join(fallback_lines)
+        fallback_body = "### 🤖 AIレビューBot（行特定不可の指摘）\n\n" + (body_content or "内容なし")
+
+    inline, fallback_bodies = dedup_existing(pr, inline, [fallback_body] if fallback_body else [])
 
     # バッチでレビュー作成
     for i in range(0, len(inline), batch_size):
@@ -266,9 +272,8 @@ def post_inline_reviews(pr, findings, batch_size):
             continue
         retry(lambda: pr.create_review(body="", event="COMMENT", comments=batch))
 
-    if fallback:
-        fb_text = "### 🤖 AIレビューBot（行特定不可の指摘）\n\n" + (fallback[0] or "内容なし")
-        retry(lambda: pr.create_review(body=fb_text, event="COMMENT"))
+    if fallback_bodies:
+        retry(lambda: pr.create_review(body=fallback_bodies[0], event="COMMENT"))
 
 
 def maybe_fail_job(findings, fail_level):
@@ -301,6 +306,8 @@ def main():
         raise RuntimeError("GITHUB_TOKEN が見つかりません。")
 
     model = cfg.get("model", DEFAULT_MODEL)
+    system_prompt = (cfg.get("system_prompt") or "").strip()
+    style = (cfg.get("style") or "").strip()
     enable_inline = bool(cfg.get("enable_inline", True))
     fail_level = cfg.get("fail_level")
     include_globs = cfg.get("include_globs", []) or []
@@ -309,6 +316,12 @@ def main():
     max_diff_chars = int(cfg.get("max_diff_chars", DEFAULT_MAX_DIFF_CHARS))
     max_findings = int(cfg.get("max_findings", DEFAULT_MAX_FINDINGS))
     batch_size = int(cfg.get("batch_size", DEFAULT_BATCH_SIZE))
+    max_output_tokens = cfg.get("max_tokens")
+    if max_output_tokens:
+        try:
+            max_output_tokens = int(max_output_tokens)
+        except (TypeError, ValueError):
+            max_output_tokens = None
 
     gh = Github(auth=Auth.Token(gh_token))
     repo = gh.get_repo(args.repo)
@@ -324,9 +337,17 @@ def main():
         retry(lambda: pr.create_review(body="### 🤖 AIレビューBot\n\n対象ファイルがありません。", event="COMMENT"))
         return
 
-    prompt_text = build_prompt(files, args.prompt, max_diff_chars)
+    prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
     client = OpenAI(api_key=openai_key)
-    resp = retry(lambda: client.responses.create(model=model, input=prompt_text))
+    request_kwargs: Dict[str, Any] = {
+        "model": model,
+        "input": (
+            [{"role": "system", "content": system_prompt}] if system_prompt else []
+        ) + [{"role": "user", "content": prompt_text}],
+    }
+    if max_output_tokens:
+        request_kwargs["max_output_tokens"] = max_output_tokens
+    resp = retry(lambda: client.responses.create(**request_kwargs))
     raw_text = getattr(resp, "output_text", "") or ""
 
     findings = []
