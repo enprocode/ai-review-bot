@@ -33,11 +33,23 @@
 
 `base_url` にOpenAI互換エンドポイントを指定するだけで、OpenRouter / Azure OpenAI / Groq / Ollama 等が使えます。APIキーは `LLM_API_KEY` に使用プロバイダのものを設定してください。
 
-例: OpenRouter経由でClaudeを使う場合
-
-```yaml
-model: anthropic/claude-sonnet-5
-base_url: https://openrouter.ai/api/v1
-```
-
 `response_format`（JSON強制）や `max_completion_tokens` に未対応のプロバイダでは、自動的にパラメータを外して再試行します。
+
+### OpenRouter のセットアップ手順
+
+OpenRouter はキー1つで GPT / Claude / Gemini など複数のモデルを切り替えられるゲートウェイです。特定プロバイダのクォータ切れ時の避難先としても使えます。
+
+1. **アカウント作成** — [openrouter.ai](https://openrouter.ai/) にサインアップ（Google/GitHubアカウント可）。
+2. **クレジット購入** — [Credits](https://openrouter.ai/settings/credits) ページで残高をチャージ（従量課金。少額から可能）。
+3. **APIキー発行** — [Keys](https://openrouter.ai/settings/keys) ページで「Create Key」。キーごとに利用上限額を設定できるので、CI用には上限を設けておくと安全です。発行されたキー（`sk-or-...`）は再表示できないため控えておきます。
+4. **GitHubリポジトリに設定** — リポジトリの Settings → Secrets and variables → Actions で、`LLM_API_KEY` にキーを登録。
+5. **config.yaml を変更**:
+
+   ```yaml
+   model: openai/gpt-5          # モデルは「プロバイダ名/モデル名」形式
+   base_url: https://openrouter.ai/api/v1
+   ```
+
+   モデル名の例: `openai/gpt-5`, `anthropic/claude-sonnet-5`, `google/gemini-2.5-pro`。利用可能な一覧は [openrouter.ai/models](https://openrouter.ai/models) を参照。
+
+利用状況・コストは [Activity](https://openrouter.ai/activity) ページで確認できます。
