@@ -572,19 +572,32 @@ def parse_verification_result(raw_text: str, n: int) -> Dict[int, bool]:
 
 
 def verify_findings_for_file(client, model: str, file_path: str, content: str,
-                             findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                             findings: List[Dict[str, Any]],
+                             max_output_tokens: Optional[int] = None,
+                             reasoning_effort: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     ファイル全文をもとに指摘を再検証し、validと確認できたものだけを返す。
-    検証自体が失敗した場合も安全側（破棄）に倒す。
+    検証自体が失敗（空応答・例外・パース不能）した場合、正しさを確認できない以上
+    見逃しよりも誤検知の防止を優先し、対象の指摘は破棄する（安全側に倒す）。
     """
     prompt = build_verification_prompt(file_path, content, findings)
     try:
-        raw = call_llm_review(client, model, "", prompt, max_output_tokens=1000)
+        raw = call_llm_review(client, model, "", prompt,
+                              max_output_tokens=max_output_tokens,
+                              reasoning_effort=reasoning_effort)
     except Exception as e:
         logging.warning("指摘の再検証に失敗したため、対象の指摘 %s 件を破棄します(%s): %s",
                         len(findings), file_path, e)
         return []
+    if not raw.strip():
+        logging.warning("再検証のレスポンスが空だったため、対象の指摘 %s 件を破棄します(%s)。",
+                        len(findings), file_path)
+        return []
     verdicts = parse_verification_result(raw, len(findings))
+    if not verdicts:
+        logging.warning("再検証結果を解析できなかったため、対象の指摘 %s 件を破棄します(%s)。",
+                        len(findings), file_path)
+        return []
     kept = []
     for i, f in enumerate(findings):
         if verdicts.get(i, False):
@@ -595,8 +608,14 @@ def verify_findings_for_file(client, model: str, file_path: str, content: str,
 
 
 def verify_high_severity_findings(client, model: str, repo, head_sha: str,
-                                  findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """CRITICAL/MAJORの指摘のみ、ファイル全文で再検証してから返す（誤検知の抑制）。"""
+                                  findings: List[Dict[str, Any]],
+                                  max_output_tokens: Optional[int] = None,
+                                  reasoning_effort: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    CRITICAL/MAJORの指摘のみ、ファイル全文で再検証してから返す（誤検知の抑制）。
+    「valid」と確認できたものだけを残し、確認できない（全文取得失敗・検証失敗含む）
+    ものは破棄する。見逃しよりも誤検知の防止を優先する設計。
+    """
     to_verify = [f for f in findings if f["severity"] in VERIFY_SEVERITIES]
     passthrough = [f for f in findings if f["severity"] not in VERIFY_SEVERITIES]
     if not to_verify:
@@ -613,7 +632,9 @@ def verify_high_severity_findings(client, model: str, repo, head_sha: str,
             logging.warning("ファイル全文を取得できないため、%s の指摘 %s 件を破棄します。",
                             path, len(file_findings))
             continue
-        verified.extend(verify_findings_for_file(client, model, path, content, file_findings))
+        verified.extend(verify_findings_for_file(client, model, path, content, file_findings,
+                                                  max_output_tokens=max_output_tokens,
+                                                  reasoning_effort=reasoning_effort))
 
     return verified + passthrough
 
@@ -799,7 +820,9 @@ def main():
 
     # 誤検知抑制: CRITICAL/MAJORはファイル全文で再検証し、確認できないものは破棄する
     before = len(findings)
-    findings = verify_high_severity_findings(client, model, repo, head_sha, findings)
+    findings = verify_high_severity_findings(client, model, repo, head_sha, findings,
+                                             max_output_tokens=max_output_tokens,
+                                             reasoning_effort=reasoning_effort)
     if len(findings) < before:
         logging.info("再検証により %s 件の指摘を誤検知として破棄しました（%s -> %s件）。",
                      before - len(findings), before, len(findings))

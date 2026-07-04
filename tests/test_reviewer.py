@@ -249,6 +249,20 @@ class VerificationTests(unittest.TestCase):
         result = reviewer.verify_high_severity_findings(None, "model", FakeRepo(), "sha", findings)
         self.assertEqual(len(result), 2)
 
+    def test_verify_findings_for_file_drops_all_on_empty_response(self):
+        findings = [self._finding()]
+
+        class FakeClient:
+            pass
+
+        original = reviewer.call_llm_review
+        reviewer.call_llm_review = lambda *a, **k: ""
+        try:
+            kept = reviewer.verify_findings_for_file(FakeClient(), "model", "a.py", "content", findings)
+        finally:
+            reviewer.call_llm_review = original
+        self.assertEqual(kept, [])
+
     def test_verify_high_severity_drops_when_file_unavailable(self):
         findings = [self._finding(severity="CRITICAL")]
 
