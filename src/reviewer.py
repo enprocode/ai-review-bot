@@ -24,6 +24,23 @@ SEVERITY_EMOJI = {
 }
 SEVERITY_ORDER = ["SUGGESTION", "MINOR", "MAJOR", "CRITICAL"]
 
+# レビュー済みコミットを記録する不可視マーカー（GitHub上では表示されない）
+REVIEWED_MARKER_RE = re.compile(r"<!-- ai-review-bot:reviewed:([0-9a-f]{40}) -->")
+
+
+def reviewed_marker(sha: str) -> str:
+    return f"<!-- ai-review-bot:reviewed:{sha} -->"
+
+
+def find_last_reviewed_sha(pr) -> Optional[str]:
+    """過去のレビューコメントから最後にレビューしたコミットSHAを取得する"""
+    sha = None
+    for r in pr.get_reviews():
+        m = REVIEWED_MARKER_RE.search(r.body or "")
+        if m:
+            sha = m.group(1)
+    return sha
+
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
@@ -165,6 +182,12 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
         "fix": "具体的な修正案（任意）"
       }}
     ]}}
+
+    【誤検知防止の注意（重要）】
+    - 差分には変更行と前後数行しか含まれません。インポート文・関数定義・設定キー・フォールバック処理などが
+      差分に「見えない」ことを「存在しない」と断定しないでください。
+    - 削除行と同内容の追加行が別の位置にある場合は「移動」であり「削除」ではありません。
+    - 差分内の証拠だけで確実に問題と断定できるもののみ指摘してください。推測に基づく指摘は出力しないでください。
 
     【変更ファイル】
     {file_list}
@@ -363,7 +386,7 @@ def dedup_existing(pr, inline_candidates, fallback_texts):
     return filtered_inline, filtered_fallback
 
 
-def post_inline_reviews(pr, findings, batch_size, changed_files):
+def post_inline_reviews(pr, findings, batch_size, changed_files, marker: str = ""):
     changed_paths = {f.filename for f in changed_files}
     pos_map = build_position_map(changed_files)
 
@@ -392,15 +415,17 @@ def post_inline_reviews(pr, findings, batch_size, changed_files):
 
     inline, fallback_bodies = dedup_existing(pr, inline, [fallback_body] if fallback_body else [])
 
-    # バッチでレビュー作成
+    # バッチでレビュー作成（マーカーは最初の投稿にのみ埋め込む）
     for i in range(0, len(inline), batch_size):
         batch = inline[i:i + batch_size]
         if not batch:
             continue
-        retry(lambda: pr.create_review(body="", event="COMMENT", comments=batch))
+        body = marker if i == 0 else ""
+        retry(lambda b=batch, bd=body: pr.create_review(body=bd, event="COMMENT", comments=b))
 
     if fallback_bodies:
-        post_comment(pr, fallback_bodies[0])
+        suffix = f"\n\n{marker}" if marker and not inline else ""
+        post_comment(pr, fallback_bodies[0] + suffix)
 
 
 def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
@@ -538,8 +563,28 @@ def main():
         logging.info("PR #%s はドラフトのためレビューをスキップします。", args.pr)
         return
 
+    # トークン節約: レビュー済みコミットはスキップし、push時は前回以降の変更ファイルのみレビュー
+    head_sha = pr.head.sha
+    last_sha = find_last_reviewed_sha(pr)
+    if last_sha == head_sha:
+        logging.info("HEAD %s は前回レビュー済みのためスキップします。", head_sha[:7])
+        return
+
     files_all = list(pr.get_files())
     files = filter_files(files_all, include_globs, exclude_globs, max_files)
+
+    if last_sha:
+        try:
+            delta_paths = {f.filename for f in repo.compare(last_sha, head_sha).files}
+            files = [f for f in files if f.filename in delta_paths]
+            logging.info("前回レビュー(%s)以降に変更されたファイルのみレビューします: %s件",
+                         last_sha[:7], len(files))
+            if not files:
+                logging.info("前回レビュー以降の変更にレビュー対象ファイルがないためスキップします。")
+                return
+        except Exception as e:
+            logging.warning("前回レビューとの差分取得に失敗したため全ファイルをレビューします: %s", e)
+
     if not files:
         logging.info("対象ファイルが見つからなかったためレビューコメントを投稿します。")
         post_comment(pr, "### 🤖 AIレビューBot\n\n対象ファイルがありません。")
@@ -594,20 +639,22 @@ def main():
         ))
         return
 
+    marker = reviewed_marker(head_sha)
+
     if not findings:
         # パース失敗時はモデルの生テキストをPRに投稿しない（先頭300文字はログ出力済み）
         body_text = raw_text if parsed_successfully else ""
-        post_comment_once(pr, build_no_findings_body(body_text, parsed_successfully))
+        post_comment_once(pr, build_no_findings_body(body_text, parsed_successfully) + f"\n\n{marker}")
         logging.info("指摘なしコメントを投稿しました。（parsed=%s）", parsed_successfully)
         return
 
     if enable_inline:
         logging.info("インラインコメントモードで %s 件の指摘を投稿します。", len(findings))
-        post_inline_reviews(pr, findings, batch_size, files_all)
+        post_inline_reviews(pr, findings, batch_size, files_all, marker=marker)
     else:
         logging.info("まとめコメントモードで %s 件の指摘を投稿します。", len(findings))
         bullets = [to_bullet(f) for f in findings]
-        post_comment(pr, "### 🤖 AIレビューBot\n\n" + "\n".join(bullets))
+        post_comment(pr, "### 🤖 AIレビューBot\n\n" + "\n".join(bullets) + f"\n\n{marker}")
 
     maybe_fail_job(findings, fail_level)
 

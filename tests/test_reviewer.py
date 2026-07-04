@@ -50,6 +50,32 @@ class DedupExistingTests(unittest.TestCase):
         self.assertEqual(inline, [])
 
 
+class ReviewedMarkerTests(unittest.TestCase):
+    def test_finds_latest_marker(self):
+        sha1, sha2 = "a" * 40, "b" * 40
+
+        class FakeReview:
+            def __init__(self, body):
+                self.body = body
+
+        class FakePR:
+            def get_reviews(self):
+                return [
+                    FakeReview(f"LGTM\n\n{reviewer.reviewed_marker(sha1)}"),
+                    FakeReview("普通のコメント"),
+                    FakeReview(reviewer.reviewed_marker(sha2)),
+                ]
+
+        self.assertEqual(reviewer.find_last_reviewed_sha(FakePR()), sha2)
+
+    def test_returns_none_without_marker(self):
+        class FakePR:
+            def get_reviews(self):
+                return []
+
+        self.assertIsNone(reviewer.find_last_reviewed_sha(FakePR()))
+
+
 class BuildPromptTests(unittest.TestCase):
     def test_style_directive_is_included_when_style_is_provided(self):
         file_stub = SimpleNamespace(filename="foo.py", patch="+print('hello')")
