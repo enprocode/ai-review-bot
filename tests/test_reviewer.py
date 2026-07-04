@@ -157,6 +157,14 @@ class ParseFindingsTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["severity"], "MAJOR")
 
+    def test_salvages_truncated_json(self):
+        raw = ('{"findings":[{"severity":"MAJOR","file":"a.py","line":1,"title":"x","detail":"d"},'
+               '{"severity":"MINOR","file":"b.py","li')  # 2件目の途中で切断
+        findings, parsed = reviewer.parse_findings_from_text(raw, max_findings=5)
+        self.assertTrue(parsed)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["file"], "a.py")
+
     def test_returns_false_when_no_json(self):
         findings, parsed = reviewer.parse_findings_from_text("plain text", max_findings=5)
         self.assertFalse(parsed)

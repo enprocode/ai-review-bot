@@ -116,7 +116,8 @@ def post_comment(pr, body: str):
     retry(lambda: pr.create_review(body=body, event="COMMENT"))
 
 
-def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[str] = None) -> str:
+def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[str] = None,
+                 max_findings: Optional[int] = None) -> str:
     filenames = [f.filename for f in files]
     file_list = "\n".join(f"- {name}" for name in filenames)
 
@@ -138,9 +139,10 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
     if truncated:
         diff_snippet += "\n\n(注意: 差分は文字数上限で途中まで切り詰められています)"
     style_directive = f"\nレビューは「{style}」なトーンでお願いします。" if style else ""
+    findings_limit = f"\n指摘は重大度の高い順に最大{max_findings}件までとし、detail/fixは簡潔にしてください。" if max_findings else ""
 
     return textwrap.dedent(f"""
-    あなたは熟練したエンジニアとして、以下のPR差分をレビューしてください。{style_directive}
+    あなたは熟練したエンジニアとして、以下のPR差分をレビューしてください。{style_directive}{findings_limit}
     出力は必ず次のJSONスキーマに従うJSONオブジェクトのみで返してください。
 
     JSONスキーマ:
@@ -196,10 +198,34 @@ def normalize_findings(data: Any, max_findings: int) -> List[Dict[str, Any]]:
     return findings
 
 
+def salvage_findings(text: str) -> Optional[List[Any]]:
+    """
+    トークン上限などで途中で切れたJSONから、完全な指摘オブジェクトだけを回収する。
+    最初の '[' 以降を走査し、パースできたオブジェクトを順に集める。
+    """
+    start = text.find("[")
+    if start == -1:
+        return None
+    decoder = json.JSONDecoder()
+    items: List[Any] = []
+    i = start + 1
+    while i < len(text):
+        while i < len(text) and text[i] in " \t\r\n,":
+            i += 1
+        if i >= len(text) or text[i] != "{":
+            break
+        try:
+            obj, i = decoder.raw_decode(text, i)
+        except ValueError:
+            break
+        items.append(obj)
+    return items or None
+
+
 def parse_findings_from_text(raw_text: str, max_findings: int) -> Tuple[List[Dict[str, Any]], bool]:
     """
     モデル出力テキストから指摘リストを抽出する。
-    まずテキスト全体がJSONであることを試み、失敗したら ```json ``` ブロックを探す。
+    テキスト全体のJSONパース → ```json ``` ブロック → 途切れJSONのサルベージの順に試す。
     """
     stripped = (raw_text or "").strip()
     if stripped:
@@ -216,6 +242,11 @@ def parse_findings_from_text(raw_text: str, max_findings: int) -> Tuple[List[Dic
             return normalize_findings(data, max_findings), True
         except Exception as exc:
             logging.warning("```json``` ブロックのパースに失敗しました: %s", exc)
+
+    salvaged = salvage_findings(stripped)
+    if salvaged:
+        logging.warning("JSONが途中で切れていたため、完全な指摘 %s 件のみ回収しました。", len(salvaged))
+        return normalize_findings(salvaged, max_findings), True
 
     return [], False
 
@@ -507,7 +538,8 @@ def main():
 
     logging.info("レビュー対象ファイル数: %s (取得 %s, 上限 %s)", len(files), len(files_all), max_files)
 
-    prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
+    prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None,
+                               max_findings=max_findings)
     client_kwargs: Dict[str, Any] = {"api_key": api_key, "base_url": base_url}
     if base_url and "openrouter" in base_url:
         # OpenRouterのアプリ帰属ヘッダ（ダッシュボードでの利用元識別用）
