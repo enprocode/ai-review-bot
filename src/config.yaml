@@ -11,10 +11,10 @@ github_token: ${GITHUB_TOKEN}
 # 無料モデルを使用中（公開リポジトリのため）。
 # ※無料モデルは送信内容が学習に使われるため、プライベート/業務コードでは
 #   有料モデル（例: openai/gpt-5）+ クレジットチャージに切り替えること
-model: qwen/qwen3-coder:free
+model: nvidia/nemotron-3-super-120b-a12b:free   # JSON形式の遵守実績があるモデルを第一候補に
 base_url: https://openrouter.ai/api/v1
-# model が利用不可・レートリミット中のときに自動切替する代替モデル（OpenRouterのみ）
-fallback_models: ["qwen/qwen3-next-80b-a3b-instruct:free", "nvidia/nemotron-3-super-120b-a12b:free"]
+# model が利用不可・出力を解析できないときに自動切替する代替モデル
+fallback_models: ["qwen/qwen3-coder:free", "qwen/qwen3-next-80b-a3b-instruct:free"]
 # OpenAI公式を直接使う場合: base_url と fallback_models を削除し、model: gpt-5 に変更
 
 # ==== レビューの基本方針 ====
