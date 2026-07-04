@@ -531,6 +531,29 @@ def fetch_file_content(repo, path: str, ref: str) -> Optional[str]:
         return None
 
 
+# 推測ベースの指摘を示す表現（これを含む指摘は決定論的に破棄する）
+SPECULATION_MARKERS = (
+    "可能性があ", "可能性も", "かもしれ", "おそれがあ", "恐れがあ", "し得る", "しうる",
+    "might ", "may ", "could ", "possibly", "potentially",
+)
+
+
+def is_speculative(finding: Dict[str, Any]) -> bool:
+    """タイトル/詳細に推測表現を含む指摘か判定する（誤検知防止のためLLM任せにしない層）"""
+    text = f'{finding.get("title", "")} {finding.get("detail", "")}'.lower()
+    return any(m in text for m in SPECULATION_MARKERS)
+
+
+def drop_speculative_findings(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    kept = []
+    for f in findings:
+        if is_speculative(f):
+            logging.warning("推測表現を含むため破棄: [%s] %s — %s", f["severity"], f["file"], f["title"])
+        else:
+            kept.append(f)
+    return kept
+
+
 def fetch_dismissed_titles(pr) -> List[str]:
     """過去に「変更なし」と回答して却下済みの指摘タイトルを収集する"""
     try:
@@ -856,9 +879,10 @@ def main():
         logging.info("指摘なしコメントを投稿しました。（parsed=%s）", parsed_successfully)
         return
 
-    # 誤検知抑制: 全指摘をファイル全文で再検証し、根拠を確認できないものは破棄する。
+    # 誤検知抑制: 推測表現を含む指摘は決定論的に破棄し、残りをファイル全文で再検証する。
     # 過去に「変更なし」と却下済みの指摘と同趣旨のものも破棄する。
     before = len(findings)
+    findings = drop_speculative_findings(findings)
     dismissed_titles = fetch_dismissed_titles(pr)
     findings = verify_findings_with_file_contents(client, model, repo, head_sha, findings,
                                                   max_output_tokens=max_output_tokens,

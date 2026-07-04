@@ -239,6 +239,18 @@ class VerificationTests(unittest.TestCase):
             reviewer.call_llm_review = original
         self.assertEqual(kept, [])
 
+    def test_drop_speculative_findings(self):
+        findings = [
+            self._finding(title="NameErrorが発生します"),
+            {"severity": "MAJOR", "file": "a.py", "line": 1,
+             "title": "取りこぼす可能性がある", "detail": "d", "fix": ""},
+            {"severity": "MAJOR", "file": "a.py", "line": 1,
+             "title": "問題", "detail": "壊れるかもしれない", "fix": ""},
+        ]
+        kept = reviewer.drop_speculative_findings(findings)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]["title"], "NameErrorが発生します")
+
     def test_fetch_dismissed_titles_collects_parents_of_no_change_replies(self):
         class FakeComment:
             def __init__(self, id, body, in_reply_to_id=None):
