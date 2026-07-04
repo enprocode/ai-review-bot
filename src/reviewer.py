@@ -199,6 +199,7 @@ def filter_files(files, include_globs, exclude_globs, max_files):
         if exclude_globs and any(fnmatch.fnmatch(path, p) for p in exclude_globs):
             continue
         if f.patch is None:
+            logging.info("パッチが取得できないためスキップします（バイナリ/大容量ファイルの可能性）: %s", path)
             continue
         result.append(f)
         if len(result) >= max_files:

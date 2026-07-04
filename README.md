@@ -42,16 +42,22 @@ Pull Request を自動解析し、設計・可読性・バグリスクなどをA
 
 ---
 
-## ⚙️ 環境変数一覧
+## ⚙️ 設定一覧（`src/config.yaml`）
 
-| 変数名 | 説明 | 例 |
-|--------|------|----|
-| `MODEL` | 使用モデル名 | `gpt-4o-mini` |
-| `MAX_TOKENS` | 出力トークン数上限 | `2000` |
-| `LANGUAGE` | 出力言語 | `ja` / `en` |
-| `REVIEW_SCOPE` | レビュー観点プリセット | `standard`, `security`, `test` |
-| `DIFF_MAX_BYTES` | diff上限（大規模PR対策） | 50000 |
-| `FAIL_ON_HIGH_RISK` | 高リスク検出でCI失敗扱い | true/false |
+実行時の挙動は環境変数ではなく `src/config.yaml` で設定します（`OPENAI_API_KEY` / `GITHUB_TOKEN` の2つのみ環境変数/Secretsから参照）。
+
+| キー | 説明 | 例 |
+|------|------|----|
+| `model` | 使用モデル名 | `gpt-5` |
+| `max_tokens` | 出力トークン数上限 | `800` |
+| `style` | レビューのトーン | `concise` |
+| `enable_inline` | インラインコメント有効化 | `true` |
+| `fail_level` | このレベル以上の指摘でCI失敗（未設定なら無効） | `MAJOR` |
+| `include_globs` / `exclude_globs` | レビュー対象/除外パターン | `**/*.py` |
+| `max_files` | 1PRあたりの対象ファイル数上限 | `200` |
+| `max_diff_chars` | LLMに渡すdiffの文字数上限 | `8000` |
+| `max_findings` | 指摘の最大件数 | `50` |
+| `log_level` | ログレベル | `INFO` |
 
 ---
 
