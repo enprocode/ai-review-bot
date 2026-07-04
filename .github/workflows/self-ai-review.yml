@@ -20,7 +20,8 @@ permissions:
 
 jobs:
   tests:
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository) }}
+    # secretsを使わないジョブのためdraft/fork除外は不要。
+    # Mergifyのマージキューが検証用に作るdraft PR上でも実行し、check-success=testsを満たせるようにする。
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
