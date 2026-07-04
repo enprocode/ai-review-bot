@@ -193,6 +193,73 @@ class ExtractRetryAfterTests(unittest.TestCase):
         self.assertEqual(reviewer.extract_retry_after(Exception("'retry_after_seconds': 999")), 60.0)
 
 
+class VerificationTests(unittest.TestCase):
+    def _finding(self, severity="MAJOR", file="a.py", title="x"):
+        return {"severity": severity, "file": file, "line": 1, "title": title,
+                "detail": "d", "fix": ""}
+
+    def test_parse_verification_result_keeps_valid_flags(self):
+        raw = json.dumps({"results": [{"index": 0, "valid": True}, {"index": 1, "valid": False}]})
+        self.assertEqual(reviewer.parse_verification_result(raw, 2), {0: True, 1: False})
+
+    def test_parse_verification_result_returns_empty_on_garbage(self):
+        self.assertEqual(reviewer.parse_verification_result("not json", 2), {})
+
+    def test_verify_findings_for_file_drops_invalid(self):
+        findings = [self._finding(title="valid one"), self._finding(title="invalid one")]
+
+        class FakeClient:
+            pass
+
+        original = reviewer.call_llm_review
+        reviewer.call_llm_review = lambda *a, **k: json.dumps(
+            {"results": [{"index": 0, "valid": True}, {"index": 1, "valid": False}]})
+        try:
+            kept = reviewer.verify_findings_for_file(FakeClient(), "model", "a.py", "content", findings)
+        finally:
+            reviewer.call_llm_review = original
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]["title"], "valid one")
+
+    def test_verify_findings_for_file_drops_all_on_call_failure(self):
+        findings = [self._finding()]
+
+        class FakeClient:
+            pass
+
+        original = reviewer.call_llm_review
+
+        def raise_err(*a, **k):
+            raise RuntimeError("boom")
+
+        reviewer.call_llm_review = raise_err
+        try:
+            kept = reviewer.verify_findings_for_file(FakeClient(), "model", "a.py", "content", findings)
+        finally:
+            reviewer.call_llm_review = original
+        self.assertEqual(kept, [])
+
+    def test_verify_high_severity_skips_minor_and_suggestion(self):
+        findings = [self._finding(severity="MINOR"), self._finding(severity="SUGGESTION")]
+
+        class FakeRepo:
+            def get_contents(self, *a, **k):
+                raise AssertionError("MINOR/SUGGESTIONは検証対象外のはず")
+
+        result = reviewer.verify_high_severity_findings(None, "model", FakeRepo(), "sha", findings)
+        self.assertEqual(len(result), 2)
+
+    def test_verify_high_severity_drops_when_file_unavailable(self):
+        findings = [self._finding(severity="CRITICAL")]
+
+        class FakeRepo:
+            def get_contents(self, *a, **k):
+                raise Exception("not found")
+
+        result = reviewer.verify_high_severity_findings(None, "model", FakeRepo(), "sha", findings)
+        self.assertEqual(result, [])
+
+
 class ParseFindingsTests(unittest.TestCase):
     def test_unwraps_dict_with_findings_list(self):
         raw = json.dumps({"findings": [{"severity": "major", "file": "a.py", "line": 1, "title": "x"}]})

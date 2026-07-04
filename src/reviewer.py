@@ -514,6 +514,110 @@ def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
     return ""
 
 
+VERIFY_SEVERITIES = {"CRITICAL", "MAJOR"}
+MAX_VERIFY_FILE_CHARS = 20000
+
+
+def fetch_file_content(repo, path: str, ref: str) -> Optional[str]:
+    """PRのHEAD時点のファイル全文を取得する。取得不能（削除/バイナリ/巨大）ならNone。"""
+    try:
+        content_file = repo.get_contents(path, ref=ref)
+        if isinstance(content_file, list) or content_file.size > MAX_VERIFY_FILE_CHARS * 4:
+            return None
+        return content_file.decoded_content.decode("utf-8", errors="replace")
+    except Exception as e:
+        logging.warning("検証用のファイル取得に失敗しました(%s): %s", path, e)
+        return None
+
+
+def build_verification_prompt(file_path: str, content: str, findings: List[Dict[str, Any]]) -> str:
+    items = "\n".join(
+        f'{i}. [{f["severity"]}] {f["title"]} — {f.get("detail", "")}'
+        for i, f in enumerate(findings)
+    )
+    return textwrap.dedent(f"""
+    以下は {file_path} の完全なファイル内容です（差分ではありません）。
+    この完全な内容を根拠に、下記の指摘それぞれが依然として正しいか判定してください。
+
+    【重要】差分だけでは見えなかった箇所（インポート文、既存実装、設定キー等）が
+    このファイル内に実在する場合、その指摘は誤りです。valid: false としてください。
+    確信が持てない指摘も valid: false としてください。
+
+    【ファイル内容】
+    ```
+    {content[:MAX_VERIFY_FILE_CHARS]}
+    ```
+
+    【検証対象の指摘】
+    {items}
+
+    出力は必ず次のJSONオブジェクトのみで返してください:
+    {{"results": [{{"index": 0, "valid": true, "reason": "簡潔な理由"}}]}}
+    """).strip()
+
+
+def parse_verification_result(raw_text: str, n: int) -> Dict[int, bool]:
+    """検証結果をパースする。パース不能なら安全側に倒して全件invalid扱い。"""
+    try:
+        data = json.loads(raw_text)
+        results = data.get("results", []) if isinstance(data, dict) else []
+        out = {}
+        for r in results:
+            idx = r.get("index")
+            if isinstance(idx, int) and 0 <= idx < n:
+                out[idx] = bool(r.get("valid"))
+        return out
+    except Exception:
+        return {}
+
+
+def verify_findings_for_file(client, model: str, file_path: str, content: str,
+                             findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    ファイル全文をもとに指摘を再検証し、validと確認できたものだけを返す。
+    検証自体が失敗した場合も安全側（破棄）に倒す。
+    """
+    prompt = build_verification_prompt(file_path, content, findings)
+    try:
+        raw = call_llm_review(client, model, "", prompt, max_output_tokens=1000)
+    except Exception as e:
+        logging.warning("指摘の再検証に失敗したため、対象の指摘 %s 件を破棄します(%s): %s",
+                        len(findings), file_path, e)
+        return []
+    verdicts = parse_verification_result(raw, len(findings))
+    kept = []
+    for i, f in enumerate(findings):
+        if verdicts.get(i, False):
+            kept.append(f)
+        else:
+            logging.warning("誤検知として破棄: [%s] %s — %s", f["severity"], f["file"], f["title"])
+    return kept
+
+
+def verify_high_severity_findings(client, model: str, repo, head_sha: str,
+                                  findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """CRITICAL/MAJORの指摘のみ、ファイル全文で再検証してから返す（誤検知の抑制）。"""
+    to_verify = [f for f in findings if f["severity"] in VERIFY_SEVERITIES]
+    passthrough = [f for f in findings if f["severity"] not in VERIFY_SEVERITIES]
+    if not to_verify:
+        return findings
+
+    by_file: Dict[str, List[Dict[str, Any]]] = {}
+    for f in to_verify:
+        by_file.setdefault(f["file"], []).append(f)
+
+    verified: List[Dict[str, Any]] = []
+    for path, file_findings in by_file.items():
+        content = fetch_file_content(repo, path, head_sha)
+        if content is None:
+            logging.warning("ファイル全文を取得できないため、%s の指摘 %s 件を破棄します。",
+                            path, len(file_findings))
+            continue
+        verified.extend(verify_findings_for_file(client, model, path, content, file_findings))
+
+    return verified + passthrough
+
+
 def maybe_fail_job(findings, fail_level):
     if not fail_level:
         return
@@ -691,6 +795,17 @@ def main():
         body_text = raw_text if parsed_successfully else ""
         post_comment_once(pr, build_no_findings_body(body_text, parsed_successfully) + f"\n\n{marker}")
         logging.info("指摘なしコメントを投稿しました。（parsed=%s）", parsed_successfully)
+        return
+
+    # 誤検知抑制: CRITICAL/MAJORはファイル全文で再検証し、確認できないものは破棄する
+    before = len(findings)
+    findings = verify_high_severity_findings(client, model, repo, head_sha, findings)
+    if len(findings) < before:
+        logging.info("再検証により %s 件の指摘を誤検知として破棄しました（%s -> %s件）。",
+                     before - len(findings), before, len(findings))
+    if not findings:
+        post_comment_once(pr, build_no_findings_body("", True) + f"\n\n{marker}")
+        logging.info("再検証の結果、有効な指摘が残らなかったためLGTMコメントを投稿しました。")
         return
 
     if enable_inline:
