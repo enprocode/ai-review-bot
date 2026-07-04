@@ -22,68 +22,12 @@ Pull Request を自動解析し、設計・可読性・バグリスクなどをA
 
 ### 1️⃣ ワークフロー作成
 
-`.github/workflows/self-ai-review.yml` を作成し、以下を貼り付けます。
+このリポジトリには実際に動く2つのワークフローが同梱されています。
 
-```yaml
-name: AI Code Review (self)
+- [`.github/workflows/self-ai-review.yml`](.github/workflows/self-ai-review.yml) — トリガー役。ユニットテストを実行後、draft/フォークPRを除外して再利用ワークフローを呼び出します。
+- [`.github/workflows/ai-review.yml`](.github/workflows/ai-review.yml) — 実処理。`src/reviewer.py` を1回実行し、GitHub App トークンでコメントを投稿します（`secrets: inherit` は使わず必要なシークレットのみ渡す設計）。
 
-on:
-  pull_request:
-    types: [opened, reopened, synchronize, ready_for_review]
-
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  pull-requests: write
-
-concurrency:
-  group: self-ai-review-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
-jobs:
-  review:
-    if: ${{ !github.event.pull_request.draft }}
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out HEAD
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          pip install -U pip
-          pip install -r requirements.txt
-
-      - name: Run AI review
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          MODEL: gpt-4o-mini
-          MAX_TOKENS: "2000"
-          LANGUAGE: "ja"
-        run: |
-          python scripts/run_review.py \
-            --repo "${{ github.repository }}" \
-            --pr "${{ github.event.pull_request.number }}" \
-            --model "${MODEL}" \
-            --language "${LANGUAGE}" \
-            --max-tokens "${MAX_TOKENS}"
-
-      - name: Post comments
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python scripts/post_comments.py \
-            --repo "${{ github.repository }}" \
-            --pr "${{ github.event.pull_request.number }}"
-```
+他リポジトリで使う場合は上記2ファイルをコピーし、`checkout` 対象とシークレット名を自リポジトリに合わせて調整してください。エントリポイントは常に単一の `src/reviewer.py`（`--repo` / `--pr` / `--prompt` を受け取る）で、`scripts/run_review.py` や `scripts/post_comments.py` のような分割スクリプトはありません。
 
 ---
 
@@ -147,8 +91,11 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -U pip -r requirements.txt
 
-# テスト実行
-python scripts/run_review.py --repo owner/repo --pr 123 --model gpt-５ --language ja
+# ユニットテスト実行
+python -m unittest discover -s tests
+
+# ローカルでレビューを試す（OPENAI_API_KEY / GITHUB_TOKEN が必要）
+python src/reviewer.py --repo owner/repo --pr 123
 ```
 
 > ローカルでも `act` コマンドでGitHub Actionsをエミュレート可能です。

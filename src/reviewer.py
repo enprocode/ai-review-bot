@@ -239,6 +239,8 @@ def build_position_map(files) -> Dict[str, Dict[int, int]]:
             elif raw.startswith('-'):  # 削除行（左側のみ進む）
                 # 右側の行番号は進めない
                 pass
+            elif raw.startswith('\\'):  # "\ No newline at end of file" 等のマーカー行（行番号は進めない）
+                pass
             else:
                 # コンテキスト行：両側進む
                 if right_line > 0:
@@ -440,7 +442,7 @@ def main():
     request_kwargs: Dict[str, Any] = {
         "model": model,
         "input": messages,
-        "response_format": {"type": "json_object"},
+        "text": {"format": {"type": "json_object"}},
     }
     if max_output_tokens:
         request_kwargs["max_output_tokens"] = max_output_tokens
@@ -450,9 +452,9 @@ def main():
             try:
                 return client.responses.create(**request_kwargs)
             except TypeError as exc:
-                if "response_format" in str(exc):
-                    logging.warning("response_format パラメータがサポートされていないため、通常のテキスト応答にフォールバックします。")
-                    request_kwargs.pop("response_format", None)
+                if "text" in str(exc):
+                    logging.warning("text.format パラメータがサポートされていないため、通常のテキスト応答にフォールバックします。")
+                    request_kwargs.pop("text", None)
                     return client.responses.create(**request_kwargs)
                 raise
 
