@@ -483,7 +483,17 @@ def main():
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
     client = OpenAI(api_key=openai_key)
 
-    raw_text = call_openai_review(client, model, system_prompt, prompt_text, max_output_tokens)
+    try:
+        raw_text = call_openai_review(client, model, system_prompt, prompt_text, max_output_tokens)
+    except Exception as e:
+        # クォータ切れは環境側の問題なのでCIを失敗させず、通知して正常終了する
+        if "insufficient_quota" in str(e):
+            logging.warning("OpenAI APIのクォータ切れのためレビューをスキップします: %s", e)
+            body = "### 🤖 AIレビューBot\n\n⚠️ OpenAI APIのクォータ切れのためレビューをスキップしました。課金設定を確認してください。"
+            if not any((r.body or "").strip() == body for r in pr.get_reviews()):
+                post_comment(pr, body)
+            return
+        raise
     if not raw_text:
         logging.error("OpenAIレスポンスが3回連続で空でした。レビュー結果を投稿できません。")
         post_comment(pr, build_no_findings_body(
