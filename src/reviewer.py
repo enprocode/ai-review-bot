@@ -78,6 +78,9 @@ def retry(fn, tries: int = 3, base_sleep: float = 1.0):
         except Exception as e:
             status = getattr(e, "status_code", None) or getattr(e, "status", None)
             retryable = status is None or status == 429 or status >= 500
+            # クォータ切れは429だが再試行しても回復しない
+            if "insufficient_quota" in str(e):
+                retryable = False
             if not retryable or i == tries - 1:
                 raise
             time.sleep(base_sleep * (2 ** i))
