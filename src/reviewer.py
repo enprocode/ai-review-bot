@@ -65,7 +65,7 @@ def load_config() -> dict:
     with open(cfg_path, "r", encoding="utf-8") as f:
         raw = f.read()
     expanded = os.path.expandvars(raw)
-    cfg = yaml.safe_load(expanded)
+    cfg = yaml.safe_load(expanded) or {}
     # 環境変数が未設定だと ${VAR} が文字列のまま残るため、未設定扱いにする
     for key in ("llm_api_key", "openai_api_key", "github_token"):
         val = cfg.get(key)
