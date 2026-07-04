@@ -239,15 +239,9 @@ class VerificationTests(unittest.TestCase):
             reviewer.call_llm_review = original
         self.assertEqual(kept, [])
 
-    def test_verify_high_severity_skips_minor_and_suggestion(self):
-        findings = [self._finding(severity="MINOR"), self._finding(severity="SUGGESTION")]
-
-        class FakeRepo:
-            def get_contents(self, *a, **k):
-                raise AssertionError("MINOR/SUGGESTIONは検証対象外のはず")
-
-        result = reviewer.verify_high_severity_findings(None, "model", FakeRepo(), "sha", findings)
-        self.assertEqual(len(result), 2)
+    def test_verify_covers_all_severities(self):
+        for sev in ("CRITICAL", "MAJOR", "MINOR", "SUGGESTION"):
+            self.assertIn(sev, reviewer.VERIFY_SEVERITIES)
 
     def test_verify_findings_for_file_drops_all_on_empty_response(self):
         findings = [self._finding()]
@@ -263,14 +257,14 @@ class VerificationTests(unittest.TestCase):
             reviewer.call_llm_review = original
         self.assertEqual(kept, [])
 
-    def test_verify_high_severity_drops_when_file_unavailable(self):
-        findings = [self._finding(severity="CRITICAL")]
+    def test_verify_drops_when_file_unavailable(self):
+        findings = [self._finding(severity="CRITICAL"), self._finding(severity="SUGGESTION")]
 
         class FakeRepo:
             def get_contents(self, *a, **k):
                 raise Exception("not found")
 
-        result = reviewer.verify_high_severity_findings(None, "model", FakeRepo(), "sha", findings)
+        result = reviewer.verify_findings_with_file_contents(None, "model", FakeRepo(), "sha", findings)
         self.assertEqual(result, [])
 
 

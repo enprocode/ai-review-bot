@@ -514,7 +514,8 @@ def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
     return ""
 
 
-VERIFY_SEVERITIES = {"CRITICAL", "MAJOR"}
+# 全severityを再検証対象とする（見逃しより誤検知防止を優先する運用方針）
+VERIFY_SEVERITIES = {"CRITICAL", "MAJOR", "MINOR", "SUGGESTION"}
 MAX_VERIFY_FILE_CHARS = 20000
 
 
@@ -539,9 +540,16 @@ def build_verification_prompt(file_path: str, content: str, findings: List[Dict[
     以下は {file_path} の完全なファイル内容です（差分ではありません）。
     この完全な内容を根拠に、下記の指摘それぞれが依然として正しいか判定してください。
 
-    【重要】差分だけでは見えなかった箇所（インポート文、既存実装、設定キー等）が
-    このファイル内に実在する場合、その指摘は誤りです。valid: false としてください。
-    確信が持てない指摘も valid: false としてください。
+    【valid: true と判定してよい条件（すべて満たす場合のみ）】
+    - ファイル内の具体的な行を根拠として引用できる
+    - その行が確実に問題を引き起こすと、推測なしに断定できる
+
+    【valid: false と判定すべきもの】
+    - 差分だけでは見えなかった箇所（インポート文、既存実装、設定キー、フォールバック処理等）が
+      このファイル内に実在し、指摘の前提が崩れるもの
+    - 「〜の可能性がある」「〜かもしれない」「〜し得る」など推測に基づく指摘
+    - 設計の好み・一般論・スタイル提案など、具体的な実害を示せないもの
+    - 少しでも確信が持てないもの
 
     【ファイル内容】
     ```
@@ -551,8 +559,8 @@ def build_verification_prompt(file_path: str, content: str, findings: List[Dict[
     【検証対象の指摘】
     {items}
 
-    出力は必ず次のJSONオブジェクトのみで返してください:
-    {{"results": [{{"index": 0, "valid": true, "reason": "簡潔な理由"}}]}}
+    出力は必ず次のJSONオブジェクトのみで返してください。reasonには根拠となる行の内容を含めてください:
+    {{"results": [{{"index": 0, "valid": true, "reason": "根拠行と簡潔な理由"}}]}}
     """).strip()
 
 
@@ -607,12 +615,12 @@ def verify_findings_for_file(client, model: str, file_path: str, content: str,
     return kept
 
 
-def verify_high_severity_findings(client, model: str, repo, head_sha: str,
-                                  findings: List[Dict[str, Any]],
-                                  max_output_tokens: Optional[int] = None,
-                                  reasoning_effort: Optional[str] = None) -> List[Dict[str, Any]]:
+def verify_findings_with_file_contents(client, model: str, repo, head_sha: str,
+                                       findings: List[Dict[str, Any]],
+                                       max_output_tokens: Optional[int] = None,
+                                       reasoning_effort: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    CRITICAL/MAJORの指摘のみ、ファイル全文で再検証してから返す（誤検知の抑制）。
+    全severityの指摘をファイル全文で再検証してから返す（誤検知の抑制）。
     「valid」と確認できたものだけを残し、確認できない（全文取得失敗・検証失敗含む）
     ものは破棄する。見逃しよりも誤検知の防止を優先する設計。
     """
@@ -818,11 +826,11 @@ def main():
         logging.info("指摘なしコメントを投稿しました。（parsed=%s）", parsed_successfully)
         return
 
-    # 誤検知抑制: CRITICAL/MAJORはファイル全文で再検証し、確認できないものは破棄する
+    # 誤検知抑制: 全指摘をファイル全文で再検証し、根拠を確認できないものは破棄する
     before = len(findings)
-    findings = verify_high_severity_findings(client, model, repo, head_sha, findings,
-                                             max_output_tokens=max_output_tokens,
-                                             reasoning_effort=reasoning_effort)
+    findings = verify_findings_with_file_contents(client, model, repo, head_sha, findings,
+                                                  max_output_tokens=max_output_tokens,
+                                                  reasoning_effort=reasoning_effort)
     if len(findings) < before:
         logging.info("再検証により %s 件の指摘を誤検知として破棄しました（%s -> %s件）。",
                      before - len(findings), before, len(findings))
