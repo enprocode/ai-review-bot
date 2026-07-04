@@ -118,6 +118,12 @@ def post_comment(pr, body: str):
     retry(lambda: pr.create_review(body=body, event="COMMENT"))
 
 
+def post_comment_once(pr, body: str):
+    """同一本文のコメントが既にあれば投稿しない（定型通知の重複防止）"""
+    if not any((r.body or "").strip() == body.strip() for r in pr.get_reviews()):
+        post_comment(pr, body)
+
+
 def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[str] = None,
                  max_findings: Optional[int] = None) -> str:
     filenames = [f.filename for f in files]
@@ -477,7 +483,7 @@ def build_no_findings_body(raw_text: str, parsed_successfully: bool) -> str:
         return f"{header}\n\nLGTM! 🎉 特に指摘はありません。"
     message = (raw_text or "").strip()
     if not message:
-        message = "レビュー内容を生成できませんでした。（モデルから有効な応答が得られませんでした）"
+        message = "レビュー内容を生成できませんでした。（モデルから有効な応答が得られませんでした。詳細はワークフローのログを参照）"
     return f"{header}\n\n{message}"
 
 
@@ -560,9 +566,7 @@ def main():
         reason = skip_reason(e)
         if reason:
             logging.warning("%s のためレビューをスキップします: %s", reason, e)
-            body = f"### 🤖 AIレビューBot\n\n⚠️ {reason} のためレビューをスキップしました。"
-            if not any((r.body or "").strip() == body for r in pr.get_reviews()):
-                post_comment(pr, body)
+            post_comment_once(pr, f"### 🤖 AIレビューBot\n\n⚠️ {reason} のためレビューをスキップしました。")
             return
         raise
     if not raw_text:
@@ -581,7 +585,9 @@ def main():
         logging.warning("モデル出力から有効な指摘を抽出できませんでした。出力(先頭300文字): %s", snippet)
 
     if not findings:
-        post_comment(pr, build_no_findings_body(raw_text, parsed_successfully))
+        # パース失敗時はモデルの生テキストをPRに投稿しない（先頭300文字はログ出力済み）
+        body_text = raw_text if parsed_successfully else ""
+        post_comment_once(pr, build_no_findings_body(body_text, parsed_successfully))
         logging.info("指摘なしコメントを投稿しました。（parsed=%s）", parsed_successfully)
         return
 
