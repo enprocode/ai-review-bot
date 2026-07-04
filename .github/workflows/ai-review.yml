@@ -11,8 +11,11 @@ on:
         required: false
         type: string
     secrets:
+      LLM_API_KEY:
+        required: false
+      # 旧名（後方互換用）。LLM_API_KEY が未設定ならこちらを使用
       OPENAI_API_KEY:
-        required: true
+        required: false
       GH_APP_ID:
         required: true
       GH_APP_PRIVATE_KEY:
@@ -68,8 +71,10 @@ jobs:
 
       - name: Run AI Review
         env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          REVIEW_PROMPT: ${{ inputs.review_prompt }}
         run: |
           set -euo pipefail
           PR_NUMBER="${{ inputs.pr_number }}"
@@ -84,4 +89,4 @@ jobs:
           python ai-review-bot/src/reviewer.py \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
-            --prompt "${{ inputs.review_prompt }}"
+            --prompt "$REVIEW_PROMPT"

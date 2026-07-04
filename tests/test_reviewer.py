@@ -50,6 +50,32 @@ class DedupExistingTests(unittest.TestCase):
         self.assertEqual(inline, [])
 
 
+class ReviewedMarkerTests(unittest.TestCase):
+    def test_finds_latest_marker(self):
+        sha1, sha2 = "a" * 40, "b" * 40
+
+        class FakeReview:
+            def __init__(self, body):
+                self.body = body
+
+        class FakePR:
+            def get_reviews(self):
+                return [
+                    FakeReview(f"LGTM\n\n{reviewer.reviewed_marker(sha1)}"),
+                    FakeReview("普通のコメント"),
+                    FakeReview(reviewer.reviewed_marker(sha2)),
+                ]
+
+        self.assertEqual(reviewer.find_last_reviewed_sha(FakePR()), sha2)
+
+    def test_returns_none_without_marker(self):
+        class FakePR:
+            def get_reviews(self):
+                return []
+
+        self.assertIsNone(reviewer.find_last_reviewed_sha(FakePR()))
+
+
 class BuildPromptTests(unittest.TestCase):
     def test_style_directive_is_included_when_style_is_provided(self):
         file_stub = SimpleNamespace(filename="foo.py", patch="+print('hello')")
@@ -70,6 +96,17 @@ class BuildPromptTests(unittest.TestCase):
             style=None,
         )
         self.assertNotIn("トーンでお願いします。", prompt)
+
+    def test_language_defaults_to_japanese(self):
+        file_stub = SimpleNamespace(filename="foo.py", patch="+print('hello')")
+        prompt = reviewer.build_prompt([file_stub], user_prompt="", max_diff_chars=1000)
+        self.assertIn("必ず日本語で記述してください", prompt)
+
+    def test_language_can_be_overridden(self):
+        file_stub = SimpleNamespace(filename="foo.py", patch="+print('hello')")
+        prompt = reviewer.build_prompt([file_stub], user_prompt="", max_diff_chars=1000,
+                                       language="English")
+        self.assertIn("必ずEnglishで記述してください", prompt)
 
     def test_diff_is_truncated_when_overflow(self):
         long_patch = "+line\n" * 100
@@ -101,29 +138,183 @@ class NoFindingsBodyTests(unittest.TestCase):
 
 
 class ExtractOutputTextTests(unittest.TestCase):
-    def test_uses_output_text_when_available(self):
-        resp = SimpleNamespace(output_text="hello")
+    def test_extracts_chat_completion_content(self):
+        resp = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="hello"))]
+        )
         self.assertEqual(reviewer.extract_output_text(resp), "hello")
 
-    def test_falls_back_to_nested_content(self):
-        resp = {
-            "output": [
-                {
-                    "content": [
-                        {"text": "first"},
-                        {"text": "second"},
-                    ]
-                }
-            ]
-        }
-        self.assertEqual(reviewer.extract_output_text(resp), "first\nsecond")
+    def test_extracts_from_dict_response(self):
+        resp = {"choices": [{"message": {"content": "hello"}}]}
+        self.assertEqual(reviewer.extract_output_text(resp), "hello")
 
     def test_returns_empty_string_when_no_text(self):
-        resp = {"output": [{"content": [{}]}]}
+        resp = {"choices": [{"message": {"content": None}}]}
         self.assertEqual(reviewer.extract_output_text(resp), "")
 
 
+class SkipReasonTests(unittest.TestCase):
+    class FakeErr(Exception):
+        def __init__(self, msg, status_code=None):
+            super().__init__(msg)
+            self.status_code = status_code
+
+    def test_detects_openrouter_credit_exhaustion(self):
+        self.assertIsNotNone(reviewer.skip_reason(self.FakeErr("Insufficient credits", 402)))
+
+    def test_detects_openai_quota_exhaustion(self):
+        self.assertIsNotNone(reviewer.skip_reason(self.FakeErr("insufficient_quota", 429)))
+
+    def test_detects_auth_error(self):
+        self.assertIn("認証エラー", reviewer.skip_reason(self.FakeErr("invalid key", 401)))
+
+    def test_returns_none_for_other_errors(self):
+        self.assertIsNone(reviewer.skip_reason(self.FakeErr("server error", 500)))
+
+
+class ExtractRetryAfterTests(unittest.TestCase):
+    def test_reads_header_from_response(self):
+        class FakeResp:
+            headers = {"Retry-After": "12"}
+
+        class FakeErr(Exception):
+            response = FakeResp()
+
+        self.assertEqual(reviewer.extract_retry_after(FakeErr("x")), 12.0)
+
+    def test_reads_retry_after_seconds_from_message(self):
+        err = Exception("... 'retry_after_seconds': 45.2 ...")
+        self.assertEqual(reviewer.extract_retry_after(err), 45.2)
+
+    def test_falls_back_to_default_when_no_info(self):
+        self.assertEqual(reviewer.extract_retry_after(Exception("no info")), 30.0)
+
+    def test_caps_excessive_wait(self):
+        self.assertEqual(reviewer.extract_retry_after(Exception("'retry_after_seconds': 999")), 60.0)
+
+
+class VerificationTests(unittest.TestCase):
+    def _finding(self, severity="MAJOR", file="a.py", title="x"):
+        return {"severity": severity, "file": file, "line": 1, "title": title,
+                "detail": "d", "fix": ""}
+
+    def test_parse_verification_result_keeps_valid_flags(self):
+        raw = json.dumps({"results": [{"index": 0, "valid": True}, {"index": 1, "valid": False}]})
+        self.assertEqual(reviewer.parse_verification_result(raw, 2), {0: True, 1: False})
+
+    def test_parse_verification_result_returns_empty_on_garbage(self):
+        self.assertEqual(reviewer.parse_verification_result("not json", 2), {})
+
+    def test_verify_findings_for_file_drops_invalid(self):
+        findings = [self._finding(title="valid one"), self._finding(title="invalid one")]
+
+        class FakeClient:
+            pass
+
+        original = reviewer.call_llm_review
+        reviewer.call_llm_review = lambda *a, **k: json.dumps(
+            {"results": [{"index": 0, "valid": True}, {"index": 1, "valid": False}]})
+        try:
+            kept = reviewer.verify_findings_for_file(FakeClient(), "model", "a.py", "content", findings)
+        finally:
+            reviewer.call_llm_review = original
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]["title"], "valid one")
+
+    def test_verify_findings_for_file_drops_all_on_call_failure(self):
+        findings = [self._finding()]
+
+        class FakeClient:
+            pass
+
+        original = reviewer.call_llm_review
+
+        def raise_err(*a, **k):
+            raise RuntimeError("boom")
+
+        reviewer.call_llm_review = raise_err
+        try:
+            kept = reviewer.verify_findings_for_file(FakeClient(), "model", "a.py", "content", findings)
+        finally:
+            reviewer.call_llm_review = original
+        self.assertEqual(kept, [])
+
+    def test_drop_speculative_findings(self):
+        findings = [
+            self._finding(title="NameErrorが発生します"),
+            {"severity": "MAJOR", "file": "a.py", "line": 1,
+             "title": "取りこぼす可能性がある", "detail": "d", "fix": ""},
+            {"severity": "MAJOR", "file": "a.py", "line": 1,
+             "title": "問題", "detail": "壊れるかもしれない", "fix": ""},
+        ]
+        kept = reviewer.drop_speculative_findings(findings)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]["title"], "NameErrorが発生します")
+
+    def test_fetch_dismissed_titles_collects_parents_of_no_change_replies(self):
+        class FakeComment:
+            def __init__(self, id, body, in_reply_to_id=None):
+                self.id = id
+                self.body = body
+                self.in_reply_to_id = in_reply_to_id
+
+        class FakePR:
+            def get_review_comments(self):
+                return [
+                    FakeComment(1, "🟠 **MAJOR** — 誤検知タイトル\n\n詳細..."),
+                    FakeComment(2, "変更なし: 実装済みです。", in_reply_to_id=1),
+                    FakeComment(3, "🔴 **CRITICAL** — 本物のバグ\n\n詳細..."),
+                    FakeComment(4, "修正しました。", in_reply_to_id=3),
+                ]
+
+        titles = reviewer.fetch_dismissed_titles(FakePR())
+        self.assertEqual(titles, ["🟠 **MAJOR** — 誤検知タイトル"])
+
+    def test_dismissed_titles_appear_in_verification_prompt(self):
+        prompt = reviewer.build_verification_prompt(
+            "a.py", "content", [self._finding()],
+            dismissed_titles=["過去に却下した指摘"])
+        self.assertIn("過去に却下した指摘", prompt)
+        self.assertIn("valid: false", prompt)
+
+    def test_verify_covers_all_severities(self):
+        for sev in ("CRITICAL", "MAJOR", "MINOR", "SUGGESTION"):
+            self.assertIn(sev, reviewer.VERIFY_SEVERITIES)
+
+    def test_verify_findings_for_file_drops_all_on_empty_response(self):
+        findings = [self._finding()]
+
+        class FakeClient:
+            pass
+
+        original = reviewer.call_llm_review
+        reviewer.call_llm_review = lambda *a, **k: ""
+        try:
+            kept = reviewer.verify_findings_for_file(FakeClient(), "model", "a.py", "content", findings)
+        finally:
+            reviewer.call_llm_review = original
+        self.assertEqual(kept, [])
+
+    def test_verify_drops_when_file_unavailable(self):
+        findings = [self._finding(severity="CRITICAL"), self._finding(severity="SUGGESTION")]
+
+        class FakeRepo:
+            def get_contents(self, *a, **k):
+                raise Exception("not found")
+
+        result = reviewer.verify_findings_with_file_contents(None, "model", FakeRepo(), "sha", findings)
+        self.assertEqual(result, [])
+
+
 class ParseFindingsTests(unittest.TestCase):
+    def test_unwraps_dict_with_findings_list(self):
+        raw = json.dumps({"findings": [{"severity": "major", "file": "a.py", "line": 1, "title": "x"}]})
+        findings, parsed = reviewer.parse_findings_from_text(raw, max_findings=5)
+        self.assertTrue(parsed)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["file"], "a.py")
+
+
     def test_parses_plain_json_string(self):
         raw = json.dumps([{
             "severity": "major",
@@ -136,6 +327,14 @@ class ParseFindingsTests(unittest.TestCase):
         self.assertTrue(parsed)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["severity"], "MAJOR")
+
+    def test_salvages_truncated_json(self):
+        raw = ('{"findings":[{"severity":"MAJOR","file":"a.py","line":1,"title":"x","detail":"d"},'
+               '{"severity":"MINOR","file":"b.py","li')  # 2件目の途中で切断
+        findings, parsed = reviewer.parse_findings_from_text(raw, max_findings=5)
+        self.assertTrue(parsed)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["file"], "a.py")
 
     def test_returns_false_when_no_json(self):
         findings, parsed = reviewer.parse_findings_from_text("plain text", max_findings=5)
