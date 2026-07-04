@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Python依存関係（requirements.txt）
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 5
+    groups:
+      # マイナー/パッチ更新は1つのPRにまとめる
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions（workflows内の actions/checkout 等）
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 5

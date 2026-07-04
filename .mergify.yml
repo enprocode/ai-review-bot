@@ -1,0 +1,28 @@
+queue_rules:
+  - name: default
+    merge_method: squash
+    queue_conditions:
+      - check-success=tests
+    merge_conditions:
+      - check-success=tests
+
+pull_request_rules:
+  # Dependabotのマイナー/パッチ更新はテスト通過で自動マージ
+  - name: Dependabot PRを自動マージ（minor/patch）
+    conditions:
+      - author=dependabot[bot]
+      - check-success=tests
+      - -conflict
+      - -draft
+    actions:
+      queue:
+        name: default
+
+  # コンフリクトしたPRに自動でラベルとコメントを付ける
+  - name: コンフリクト時に通知
+    conditions:
+      - conflict
+      - -closed
+    actions:
+      comment:
+        message: "⚠️ このPRは main とコンフリクトしています。リベースをお願いします。"

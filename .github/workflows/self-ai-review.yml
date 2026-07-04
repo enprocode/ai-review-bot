@@ -45,8 +45,8 @@ jobs:
           python -m unittest discover -s tests
 
   self:
-    # pull_request 時のみドラフトや fork を除外
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository) }}
+    # pull_request 時のみドラフトや fork を除外。dependabot はSecretsが渡されないため除外
+    if: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository)) }}
     needs: tests
 
     # ✅ secrets: inherit を避け、明示的に必要なシークレットのみ渡す
