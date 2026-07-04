@@ -239,6 +239,32 @@ class VerificationTests(unittest.TestCase):
             reviewer.call_llm_review = original
         self.assertEqual(kept, [])
 
+    def test_fetch_dismissed_titles_collects_parents_of_no_change_replies(self):
+        class FakeComment:
+            def __init__(self, id, body, in_reply_to_id=None):
+                self.id = id
+                self.body = body
+                self.in_reply_to_id = in_reply_to_id
+
+        class FakePR:
+            def get_review_comments(self):
+                return [
+                    FakeComment(1, "🟠 **MAJOR** — 誤検知タイトル\n\n詳細..."),
+                    FakeComment(2, "変更なし: 実装済みです。", in_reply_to_id=1),
+                    FakeComment(3, "🔴 **CRITICAL** — 本物のバグ\n\n詳細..."),
+                    FakeComment(4, "修正しました。", in_reply_to_id=3),
+                ]
+
+        titles = reviewer.fetch_dismissed_titles(FakePR())
+        self.assertEqual(titles, ["🟠 **MAJOR** — 誤検知タイトル"])
+
+    def test_dismissed_titles_appear_in_verification_prompt(self):
+        prompt = reviewer.build_verification_prompt(
+            "a.py", "content", [self._finding()],
+            dismissed_titles=["過去に却下した指摘"])
+        self.assertIn("過去に却下した指摘", prompt)
+        self.assertIn("valid: false", prompt)
+
     def test_verify_covers_all_severities(self):
         for sev in ("CRITICAL", "MAJOR", "MINOR", "SUGGESTION"):
             self.assertIn(sev, reviewer.VERIFY_SEVERITIES)

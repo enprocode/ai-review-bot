@@ -531,11 +531,38 @@ def fetch_file_content(repo, path: str, ref: str) -> Optional[str]:
         return None
 
 
-def build_verification_prompt(file_path: str, content: str, findings: List[Dict[str, Any]]) -> str:
+def fetch_dismissed_titles(pr) -> List[str]:
+    """過去に「変更なし」と回答して却下済みの指摘タイトルを収集する"""
+    try:
+        comments = list(pr.get_review_comments())
+    except Exception as e:
+        logging.warning("却下済み指摘の取得に失敗しました: %s", e)
+        return []
+    by_id = {c.id: c for c in comments}
+    titles = []
+    for c in comments:
+        parent_id = getattr(c, "in_reply_to_id", None)
+        if (c.body or "").startswith("変更なし") and parent_id in by_id:
+            first_line = (by_id[parent_id].body or "").splitlines()[0].strip()
+            if first_line:
+                titles.append(first_line)
+    return titles
+
+
+def build_verification_prompt(file_path: str, content: str, findings: List[Dict[str, Any]],
+                              dismissed_titles: Optional[List[str]] = None) -> str:
     items = "\n".join(
         f'{i}. [{f["severity"]}] {f["title"]} — {f.get("detail", "")}'
         for i, f in enumerate(findings)
     )
+    dismissed_section = ""
+    if dismissed_titles:
+        dismissed_list = "\n".join(f"- {t}" for t in dismissed_titles[:30])
+        dismissed_section = f"""
+    【過去にレビュアーが誤検知・変更不要と判定済みの指摘】
+    以下と同趣旨の指摘は、表現が違っても必ず valid: false としてください:
+    {dismissed_list}
+    """
     return textwrap.dedent(f"""
     以下は {file_path} の完全なファイル内容です（差分ではありません）。
     この完全な内容を根拠に、下記の指摘それぞれが依然として正しいか判定してください。
@@ -550,7 +577,7 @@ def build_verification_prompt(file_path: str, content: str, findings: List[Dict[
     - 「〜の可能性がある」「〜かもしれない」「〜し得る」など推測に基づく指摘
     - 設計の好み・一般論・スタイル提案など、具体的な実害を示せないもの
     - 少しでも確信が持てないもの
-
+    {dismissed_section}
     【ファイル内容】
     ```
     {content[:MAX_VERIFY_FILE_CHARS]}
@@ -582,13 +609,14 @@ def parse_verification_result(raw_text: str, n: int) -> Dict[int, bool]:
 def verify_findings_for_file(client, model: str, file_path: str, content: str,
                              findings: List[Dict[str, Any]],
                              max_output_tokens: Optional[int] = None,
-                             reasoning_effort: Optional[str] = None) -> List[Dict[str, Any]]:
+                             reasoning_effort: Optional[str] = None,
+                             dismissed_titles: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """
     ファイル全文をもとに指摘を再検証し、validと確認できたものだけを返す。
     検証自体が失敗（空応答・例外・パース不能）した場合、正しさを確認できない以上
     見逃しよりも誤検知の防止を優先し、対象の指摘は破棄する（安全側に倒す）。
     """
-    prompt = build_verification_prompt(file_path, content, findings)
+    prompt = build_verification_prompt(file_path, content, findings, dismissed_titles=dismissed_titles)
     try:
         raw = call_llm_review(client, model, "", prompt,
                               max_output_tokens=max_output_tokens,
@@ -618,7 +646,8 @@ def verify_findings_for_file(client, model: str, file_path: str, content: str,
 def verify_findings_with_file_contents(client, model: str, repo, head_sha: str,
                                        findings: List[Dict[str, Any]],
                                        max_output_tokens: Optional[int] = None,
-                                       reasoning_effort: Optional[str] = None) -> List[Dict[str, Any]]:
+                                       reasoning_effort: Optional[str] = None,
+                                       dismissed_titles: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """
     全severityの指摘をファイル全文で再検証してから返す（誤検知の抑制）。
     「valid」と確認できたものだけを残し、確認できない（全文取得失敗・検証失敗含む）
@@ -642,7 +671,8 @@ def verify_findings_with_file_contents(client, model: str, repo, head_sha: str,
             continue
         verified.extend(verify_findings_for_file(client, model, path, content, file_findings,
                                                   max_output_tokens=max_output_tokens,
-                                                  reasoning_effort=reasoning_effort))
+                                                  reasoning_effort=reasoning_effort,
+                                                  dismissed_titles=dismissed_titles))
 
     return verified + passthrough
 
@@ -826,11 +856,14 @@ def main():
         logging.info("指摘なしコメントを投稿しました。（parsed=%s）", parsed_successfully)
         return
 
-    # 誤検知抑制: 全指摘をファイル全文で再検証し、根拠を確認できないものは破棄する
+    # 誤検知抑制: 全指摘をファイル全文で再検証し、根拠を確認できないものは破棄する。
+    # 過去に「変更なし」と却下済みの指摘と同趣旨のものも破棄する。
     before = len(findings)
+    dismissed_titles = fetch_dismissed_titles(pr)
     findings = verify_findings_with_file_contents(client, model, repo, head_sha, findings,
                                                   max_output_tokens=max_output_tokens,
-                                                  reasoning_effort=reasoning_effort)
+                                                  reasoning_effort=reasoning_effort,
+                                                  dismissed_titles=dismissed_titles)
     if len(findings) < before:
         logging.info("再検証により %s 件の指摘を誤検知として破棄しました（%s -> %s件）。",
                      before - len(findings), before, len(findings))
