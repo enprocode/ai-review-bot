@@ -13,7 +13,7 @@ github_token: ${GITHUB_TOKEN}
 model: openai/gpt-5-mini
 base_url: https://openrouter.ai/api/v1
 # model が利用不可・出力を解析できないときに自動切替する代替モデル（別プロバイダで冗長化）
-fallback_models: ["anthropic/claude-haiku-4-5", "google/gemini-2.5-flash"]
+fallback_models: ["google/gemini-2.5-flash"]
 # OpenAI公式を直接使う場合: base_url と fallback_models を削除し、model: gpt-5-mini に変更
 
 # ==== レビューの基本方針 ====
