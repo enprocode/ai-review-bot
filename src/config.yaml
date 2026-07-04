@@ -22,6 +22,7 @@ system_prompt: |
   You are a senior software engineer doing code reviews.
   Focus on correctness, security, readability, and tests.
 style: concise                # レビューのトーン
+language: 日本語              # レビューコメントの言語（例: 日本語 / English / 한국어）。未設定なら日本語
 # 出力トークン数上限。gpt-5等の推論モデルは思考トークンもここから消費するため
 # 小さすぎると本文が空になる（finish_reason=length のログが出る）。
 # OpenRouterではキーの残高/日次上限を超える値を指定すると402になる点にも注意

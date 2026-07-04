@@ -125,7 +125,7 @@ def post_comment_once(pr, body: str):
 
 
 def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[str] = None,
-                 max_findings: Optional[int] = None) -> str:
+                 max_findings: Optional[int] = None, language: str = "日本語") -> str:
     filenames = [f.filename for f in files]
     file_list = "\n".join(f"- {name}" for name in filenames)
 
@@ -148,9 +148,10 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
         diff_snippet += "\n\n(注意: 差分は文字数上限で途中まで切り詰められています)"
     style_directive = f"\nレビューは「{style}」なトーンでお願いします。" if style else ""
     findings_limit = f"\n指摘は重大度の高い順に最大{max_findings}件までとし、detail/fixは簡潔にしてください。" if max_findings else ""
+    language_directive = f"\nすべての指摘（title / detail / fix）は必ず{language}で記述してください。"
 
     return textwrap.dedent(f"""
-    あなたは熟練したエンジニアとして、以下のPR差分をレビューしてください。{style_directive}{findings_limit}
+    あなたは熟練したエンジニアとして、以下のPR差分をレビューしてください。{style_directive}{findings_limit}{language_directive}
     出力は必ず次のJSONスキーマに従うJSONオブジェクトのみで返してください。
 
     JSONスキーマ:
@@ -546,8 +547,9 @@ def main():
 
     logging.info("レビュー対象ファイル数: %s (取得 %s, 上限 %s)", len(files), len(files_all), max_files)
 
+    language = (str(cfg.get("language") or "")).strip() or "日本語"
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None,
-                               max_findings=max_findings)
+                               max_findings=max_findings, language=language)
     client_kwargs: Dict[str, Any] = {"api_key": api_key, "base_url": base_url}
     if base_url and "openrouter" in base_url:
         # OpenRouterのアプリ帰属ヘッダ（ダッシュボードでの利用元識別用）

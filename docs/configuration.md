@@ -20,6 +20,7 @@
 | `fallback_models` | `model` が利用不可のとき自動切替する代替モデルのリスト（OpenRouterのみ） | `["anthropic/claude-sonnet-5"]` |
 | `system_prompt` | レビューの基本方針 | （config.yaml参照） |
 | `style` | レビューのトーン | `concise` |
+| `language` | レビューコメントの言語。未設定なら日本語 | `日本語` / `English` |
 | `max_tokens` | 出力トークン数上限（推論モデルは思考トークンもここから消費） | `1500` |
 | `reasoning_effort` | 推論モデルの思考トークン量（`low`/`medium`/`high`）。未対応モデルでは自動で外して再試行 | `low` |
 | `enable_inline` | `true`: インラインコメント / `false`: まとめコメントのみ | `true` |

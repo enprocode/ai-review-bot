@@ -71,6 +71,17 @@ class BuildPromptTests(unittest.TestCase):
         )
         self.assertNotIn("トーンでお願いします。", prompt)
 
+    def test_language_defaults_to_japanese(self):
+        file_stub = SimpleNamespace(filename="foo.py", patch="+print('hello')")
+        prompt = reviewer.build_prompt([file_stub], user_prompt="", max_diff_chars=1000)
+        self.assertIn("必ず日本語で記述してください", prompt)
+
+    def test_language_can_be_overridden(self):
+        file_stub = SimpleNamespace(filename="foo.py", patch="+print('hello')")
+        prompt = reviewer.build_prompt([file_stub], user_prompt="", max_diff_chars=1000,
+                                       language="English")
+        self.assertIn("必ずEnglishで記述してください", prompt)
+
     def test_diff_is_truncated_when_overflow(self):
         long_patch = "+line\n" * 100
         file_stub = SimpleNamespace(filename="foo.py", patch=long_patch)
