@@ -365,7 +365,8 @@ def post_inline_reviews(pr, findings, batch_size, changed_files):
 
 def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
                     max_output_tokens: Optional[int],
-                    fallback_models: Optional[List[str]] = None) -> str:
+                    fallback_models: Optional[List[str]] = None,
+                    reasoning_effort: Optional[str] = None) -> str:
     """
     Chat Completions API（OpenAI互換）を呼び、モデル出力テキストを返す。
     空レスポンスは最大3回まで再取得し、それでも空なら "" を返す。
@@ -385,6 +386,9 @@ def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
     if fallback_models:
         # OpenRouterのモデルフォールバック（指定モデルが落ちている場合に自動切替）
         request_kwargs["extra_body"] = {"models": fallback_models}
+    if reasoning_effort:
+        # 推論モデルの思考トークン量を制御（max_tokensが小さい環境では low 推奨）
+        request_kwargs["reasoning_effort"] = reasoning_effort
 
     def _call():
         try:
@@ -399,6 +403,10 @@ def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
             if "max_completion_tokens" in msg and "max_completion_tokens" in request_kwargs:
                 logging.warning("max_completion_tokens 未対応のため、max_tokens で再試行します。")
                 request_kwargs["max_tokens"] = request_kwargs.pop("max_completion_tokens")
+                return _call()
+            if "reasoning_effort" in msg and "reasoning_effort" in request_kwargs:
+                logging.warning("reasoning_effort 未対応のため、外して再試行します。")
+                request_kwargs.pop("reasoning_effort")
                 return _call()
             raise
 
@@ -463,6 +471,7 @@ def main():
     model = cfg.get("model", DEFAULT_MODEL)
     base_url = (cfg.get("base_url") or "").strip() or None
     fallback_models = cfg.get("fallback_models") or []
+    reasoning_effort = (str(cfg.get("reasoning_effort") or "")).strip() or None
     system_prompt = (cfg.get("system_prompt") or "").strip()
     style = (cfg.get("style") or "").strip()
     enable_inline = bool(cfg.get("enable_inline", True))
@@ -510,7 +519,8 @@ def main():
 
     try:
         raw_text = call_llm_review(client, model, system_prompt, prompt_text,
-                                   max_output_tokens, fallback_models=fallback_models)
+                                   max_output_tokens, fallback_models=fallback_models,
+                                   reasoning_effort=reasoning_effort)
     except Exception as e:
         # 残高切れ・認証設定ミスは環境側の問題なのでCIを失敗させず、通知して正常終了する
         reason = skip_reason(e)

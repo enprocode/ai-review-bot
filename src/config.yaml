@@ -25,6 +25,9 @@ style: concise                # レビューのトーン
 # 小さすぎると本文が空になる（finish_reason=length のログが出る）。
 # OpenRouterではキーの残高/日次上限を超える値を指定すると402になる点にも注意
 max_tokens: 3000
+# 推論モデル（gpt-5等）の思考トークン量: low / medium / high。
+# max_tokens が小さい環境では low にしないと思考だけで上限に達し本文が空になる
+reasoning_effort: low
 
 # ==== 動作スイッチ ====
 enable_inline: true           # true: インラインコメント / false: まとめコメントのみ
