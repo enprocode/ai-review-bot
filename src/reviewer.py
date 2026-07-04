@@ -50,7 +50,7 @@ def load_config() -> dict:
     expanded = os.path.expandvars(raw)
     cfg = yaml.safe_load(expanded)
     # 環境変数が未設定だと ${VAR} が文字列のまま残るため、未設定扱いにする
-    for key in ("openai_api_key", "github_token"):
+    for key in ("llm_api_key", "openai_api_key", "github_token"):
         val = cfg.get(key)
         if isinstance(val, str) and re.fullmatch(r"\$\{[^}]+\}", val.strip()):
             cfg[key] = None
@@ -430,10 +430,11 @@ def main():
     log_level = getattr(logging, log_level_name, logging.INFO)
     logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
     logging.info("AIレビューを開始します: repo=%s, pr=%s", args.repo, args.pr)
-    openai_key = cfg.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
+    api_key = (cfg.get("llm_api_key") or cfg.get("openai_api_key")
+               or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY"))
     gh_token = cfg.get("github_token") or os.getenv("GITHUB_TOKEN")
-    if not openai_key:
-        raise RuntimeError("OPENAI_API_KEY が見つかりません。")
+    if not api_key:
+        raise RuntimeError("LLM_API_KEY（旧名: OPENAI_API_KEY）が見つかりません。")
     if not gh_token:
         raise RuntimeError("GITHUB_TOKEN が見つかりません。")
 
@@ -475,7 +476,7 @@ def main():
     logging.info("レビュー対象ファイル数: %s (取得 %s, 上限 %s)", len(files), len(files_all), max_files)
 
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
-    client = OpenAI(api_key=openai_key, base_url=base_url)
+    client = OpenAI(api_key=api_key, base_url=base_url)
 
     try:
         raw_text = call_llm_review(client, model, system_prompt, prompt_text, max_output_tokens)

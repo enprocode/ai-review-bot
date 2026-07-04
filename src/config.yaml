@@ -6,13 +6,13 @@ style: concise
 max_tokens: 800
 
 # ==== 認証（環境変数参照のまま） ====
-openai_api_key: ${OPENAI_API_KEY}
+llm_api_key: ${LLM_API_KEY}   # 未設定なら旧名 OPENAI_API_KEY に自動フォールバック
 github_token: ${GITHUB_TOKEN}
 
 # ==== モデル設定 ====
 model: gpt-5
 # OpenAI互換エンドポイント（OpenRouter / Azure OpenAI / Groq / Ollama 等）を使う場合に指定。
-# 未設定ならOpenAI公式。APIキーは引き続き OPENAI_API_KEY を使用。
+# 未設定ならOpenAI公式。APIキーは LLM_API_KEY を使用。
 # 例: base_url: https://openrouter.ai/api/v1
 # base_url:
 

@@ -35,16 +35,16 @@ Pull Request を自動解析し、設計・可読性・バグリスクなどをA
 
 | 名前 | 説明 |
 |------|------|
-| `OPENAI_API_KEY` | LLMのAPIキー（OpenAI / Azure OpenAI / OpenRouter等） |
+| `LLM_API_KEY` | LLMのAPIキー（OpenAI / Azure OpenAI / OpenRouter等）。旧名 `OPENAI_API_KEY` も後方互換で利用可 |
 | `GITHUB_TOKEN` | 自動コメント投稿に使用（デフォルトで付与） |
 
-> 🔒 フォークPRでは `OPENAI_API_KEY` は渡されません。安全設計のため外部APIを利用しないレビュー処理が推奨されます。
+> 🔒 フォークPRでは `LLM_API_KEY` は渡されません。安全設計のため外部APIを利用しないレビュー処理が推奨されます。
 
 ---
 
 ## ⚙️ 設定一覧（`src/config.yaml`）
 
-実行時の挙動は環境変数ではなく `src/config.yaml` で設定します（`OPENAI_API_KEY` / `GITHUB_TOKEN` の2つのみ環境変数/Secretsから参照）。
+実行時の挙動は環境変数ではなく `src/config.yaml` で設定します（`LLM_API_KEY`（旧名 `OPENAI_API_KEY` も可） / `GITHUB_TOKEN` のみ環境変数/Secretsから参照）。
 
 | キー | 説明 | 例 |
 |------|------|----|
@@ -102,7 +102,7 @@ pip install -U pip -r requirements.txt
 # ユニットテスト実行
 python -m unittest discover -s tests
 
-# ローカルでレビューを試す（OPENAI_API_KEY / GITHUB_TOKEN が必要）
+# ローカルでレビューを試す（LLM_API_KEY / GITHUB_TOKEN が必要）
 python src/reviewer.py --repo owner/repo --pr 123
 ```
 
