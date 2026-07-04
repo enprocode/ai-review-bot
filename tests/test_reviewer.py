@@ -116,6 +116,25 @@ class ExtractOutputTextTests(unittest.TestCase):
         self.assertEqual(reviewer.extract_output_text(resp), "")
 
 
+class SkipReasonTests(unittest.TestCase):
+    class FakeErr(Exception):
+        def __init__(self, msg, status_code=None):
+            super().__init__(msg)
+            self.status_code = status_code
+
+    def test_detects_openrouter_credit_exhaustion(self):
+        self.assertIsNotNone(reviewer.skip_reason(self.FakeErr("Insufficient credits", 402)))
+
+    def test_detects_openai_quota_exhaustion(self):
+        self.assertIsNotNone(reviewer.skip_reason(self.FakeErr("insufficient_quota", 429)))
+
+    def test_detects_auth_error(self):
+        self.assertIn("認証エラー", reviewer.skip_reason(self.FakeErr("invalid key", 401)))
+
+    def test_returns_none_for_other_errors(self):
+        self.assertIsNone(reviewer.skip_reason(self.FakeErr("server error", 500)))
+
+
 class ParseFindingsTests(unittest.TestCase):
     def test_unwraps_dict_with_findings_list(self):
         raw = json.dumps({"findings": [{"severity": "major", "file": "a.py", "line": 1, "title": "x"}]})

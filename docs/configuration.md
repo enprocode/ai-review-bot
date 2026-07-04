@@ -15,8 +15,9 @@
 
 | キー | 説明 | デフォルト/例 |
 |------|------|----|
-| `model` | 使用モデル名 | `gpt-5` |
+| `model` | 使用モデル名（OpenRouterでは `プロバイダ名/モデル名` 形式） | `openai/gpt-5` |
 | `base_url` | OpenAI互換エンドポイント。未設定ならOpenAI公式 | `https://openrouter.ai/api/v1` |
+| `fallback_models` | `model` が利用不可のとき自動切替する代替モデルのリスト（OpenRouterのみ） | `["anthropic/claude-sonnet-5"]` |
 | `system_prompt` | レビューの基本方針 | （config.yaml参照） |
 | `style` | レビューのトーン | `concise` |
 | `max_tokens` | 出力トークン数上限 | `800` |
@@ -52,4 +53,9 @@ OpenRouter はキー1つで GPT / Claude / Gemini など複数のモデルを切
 
    モデル名の例: `openai/gpt-5`, `anthropic/claude-sonnet-5`, `google/gemini-2.5-pro`。利用可能な一覧は [openrouter.ai/models](https://openrouter.ai/models) を参照。
 
-利用状況・コストは [Activity](https://openrouter.ai/activity) ページで確認できます。
+利用状況・コストは [Activity](https://openrouter.ai/activity) ページで確認できます（Botからの呼び出しは `ai-review-bot` として表示されます）。
+
+補足:
+
+- `fallback_models` を設定すると、指定モデルが落ちている・レートリミット中のときにOpenRouterが自動で代替モデルに切り替えます。
+- クレジット切れ（402）や認証エラー（401/403）の場合、CIは失敗せず、PRに通知コメントを投稿してスキップします。

@@ -9,12 +9,12 @@ max_tokens: 800
 llm_api_key: ${LLM_API_KEY}   # 未設定なら旧名 OPENAI_API_KEY に自動フォールバック
 github_token: ${GITHUB_TOKEN}
 
-# ==== モデル設定 ====
-model: gpt-5
-# OpenAI互換エンドポイント（OpenRouter / Azure OpenAI / Groq / Ollama 等）を使う場合に指定。
-# 未設定ならOpenAI公式。APIキーは LLM_API_KEY を使用。
-# 例: base_url: https://openrouter.ai/api/v1
-# base_url:
+# ==== モデル設定（OpenRouter経由。APIキーは LLM_API_KEY に OpenRouter のキーを設定） ====
+model: openai/gpt-5
+base_url: https://openrouter.ai/api/v1
+# 上記モデルが利用不可のときに自動で切り替える代替モデル（OpenRouterのみ対応）
+fallback_models: ["anthropic/claude-sonnet-5"]
+# OpenAI公式を直接使う場合は base_url と fallback_models を削除し、model: gpt-5 に変更
 
 # ==== 動作スイッチ ====
 enable_inline: true         # true: インラインコメント / false: まとめコメントのみ

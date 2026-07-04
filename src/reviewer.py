@@ -57,6 +57,20 @@ def load_config() -> dict:
     return cfg
 
 
+def skip_reason(e: Exception) -> Optional[str]:
+    """
+    レビューをCI失敗にせずスキップすべきエラーなら理由を返す。
+    環境側の問題（残高・認証設定）はコード側で解決できないため通知に留める。
+    """
+    status = getattr(e, "status_code", None) or getattr(e, "status", None)
+    msg = str(e).lower()
+    if status == 402 or "insufficient_quota" in msg or "insufficient credits" in msg:
+        return "APIのクレジット/クォータ切れ"
+    if status in (401, 403):
+        return "APIキーの認証エラー（LLM_API_KEY と base_url の組み合わせを確認してください）"
+    return None
+
+
 def retry(fn, tries: int = 3, base_sleep: float = 1.0):
     """指数バックオフ付きリトライ（4xxなど再試行しても無駄なエラーは即時raise）"""
     for i in range(tries):
@@ -350,7 +364,8 @@ def post_inline_reviews(pr, findings, batch_size, changed_files):
 
 
 def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
-                    max_output_tokens: Optional[int]) -> str:
+                    max_output_tokens: Optional[int],
+                    fallback_models: Optional[List[str]] = None) -> str:
     """
     Chat Completions API（OpenAI互換）を呼び、モデル出力テキストを返す。
     空レスポンスは最大3回まで再取得し、それでも空なら "" を返す。
@@ -367,6 +382,9 @@ def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
     }
     if max_output_tokens:
         request_kwargs["max_completion_tokens"] = max_output_tokens
+    if fallback_models:
+        # OpenRouterのモデルフォールバック（指定モデルが落ちている場合に自動切替）
+        request_kwargs["extra_body"] = {"models": fallback_models}
 
     def _call():
         try:
@@ -440,6 +458,7 @@ def main():
 
     model = cfg.get("model", DEFAULT_MODEL)
     base_url = (cfg.get("base_url") or "").strip() or None
+    fallback_models = cfg.get("fallback_models") or []
     system_prompt = (cfg.get("system_prompt") or "").strip()
     style = (cfg.get("style") or "").strip()
     enable_inline = bool(cfg.get("enable_inline", True))
@@ -476,15 +495,24 @@ def main():
     logging.info("レビュー対象ファイル数: %s (取得 %s, 上限 %s)", len(files), len(files_all), max_files)
 
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client_kwargs: Dict[str, Any] = {"api_key": api_key, "base_url": base_url}
+    if base_url and "openrouter" in base_url:
+        # OpenRouterのアプリ帰属ヘッダ（ダッシュボードでの利用元識別用）
+        client_kwargs["default_headers"] = {
+            "HTTP-Referer": "https://github.com/enprocode/ai-review-bot",
+            "X-Title": "ai-review-bot",
+        }
+    client = OpenAI(**client_kwargs)
 
     try:
-        raw_text = call_llm_review(client, model, system_prompt, prompt_text, max_output_tokens)
+        raw_text = call_llm_review(client, model, system_prompt, prompt_text,
+                                   max_output_tokens, fallback_models=fallback_models)
     except Exception as e:
-        # クォータ切れは環境側の問題なのでCIを失敗させず、通知して正常終了する
-        if "insufficient_quota" in str(e):
-            logging.warning("OpenAI APIのクォータ切れのためレビューをスキップします: %s", e)
-            body = "### 🤖 AIレビューBot\n\n⚠️ OpenAI APIのクォータ切れのためレビューをスキップしました。課金設定を確認してください。"
+        # 残高切れ・認証設定ミスは環境側の問題なのでCIを失敗させず、通知して正常終了する
+        reason = skip_reason(e)
+        if reason:
+            logging.warning("%s のためレビューをスキップします: %s", reason, e)
+            body = f"### 🤖 AIレビューBot\n\n⚠️ {reason} のためレビューをスキップしました。"
             if not any((r.body or "").strip() == body for r in pr.get_reviews()):
                 post_comment(pr, body)
             return
