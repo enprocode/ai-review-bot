@@ -1,32 +1,41 @@
-# ==== レビューの基本方針（必要なら調整） ====
-system_prompt: |
-  You are a senior software engineer doing code reviews.
-  Focus on correctness, security, readability, and tests.
-style: concise
-max_tokens: 800
+# =============================================================
+# AI Review Bot 設定ファイル
+# 全キーの説明は docs/configuration.md を参照
+# =============================================================
 
-# ==== 認証（環境変数参照のまま） ====
+# ==== 認証（環境変数参照。値は直接書かないこと） ====
 llm_api_key: ${LLM_API_KEY}   # 未設定なら旧名 OPENAI_API_KEY に自動フォールバック
 github_token: ${GITHUB_TOKEN}
 
-# ==== モデル設定（OpenRouter経由。APIキーは LLM_API_KEY に OpenRouter のキーを設定） ====
+# ==== モデル設定（OpenRouter経由。LLM_API_KEY に OpenRouter のキーを設定） ====
 model: openai/gpt-5
 base_url: https://openrouter.ai/api/v1
-# 上記モデルが利用不可のときに自動で切り替える代替モデル（OpenRouterのみ対応）
+# model が利用不可・レートリミット中のときに自動切替する代替モデル（OpenRouterのみ）
 fallback_models: ["anthropic/claude-sonnet-5"]
-# OpenAI公式を直接使う場合は base_url と fallback_models を削除し、model: gpt-5 に変更
+# OpenAI公式を直接使う場合: base_url と fallback_models を削除し、model: gpt-5 に変更
+# 無料モデルを試す場合: model: deepseek/deepseek-chat-v3:free
+#   ※無料モデルは送信内容が学習に使われるため、プライベート/業務コードでは使用しないこと
+
+# ==== レビューの基本方針 ====
+system_prompt: |
+  You are a senior software engineer doing code reviews.
+  Focus on correctness, security, readability, and tests.
+style: concise                # レビューのトーン
+max_tokens: 800               # 出力トークン数上限
 
 # ==== 動作スイッチ ====
-enable_inline: true         # true: インラインコメント / false: まとめコメントのみ
-fail_level: MAJOR           # CRITICAL/MAJOR/MINOR/SUGGESTION。しきい値以上でCI失敗。未設定なら無効
+enable_inline: true           # true: インラインコメント / false: まとめコメントのみ
+fail_level: MAJOR             # CRITICAL/MAJOR/MINOR/SUGGESTION。しきい値以上でCI失敗。未設定なら無効
 
 # ==== 対象ファイルフィルタ ====
 include_globs: ["**/*.py", "**/*.yml", "**/*.yaml", "**/*.toml", "**/*.json"]
 exclude_globs: ["**/.venv/**", "**/dist/**", "**/build/**", "**/*.lock", "**/node_modules/**"]
-max_files: 200
+max_files: 200                # 1PRあたりの対象ファイル数上限
 
 # ==== LLMへ渡す情報量のリミット ====
-max_diff_chars: 8000
-max_findings: 50
-batch_size: 20
+max_diff_chars: 8000          # diffの文字数上限（超過分は切り詰め）
+max_findings: 50              # 指摘の最大件数
+batch_size: 20                # インラインコメントの1レビューあたり投稿件数
+
+# ==== ログ ====
 log_level: INFO
