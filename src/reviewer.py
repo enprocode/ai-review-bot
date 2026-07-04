@@ -595,7 +595,8 @@ def main():
     language = (str(cfg.get("language") or "")).strip() or "日本語"
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None,
                                max_findings=max_findings, language=language)
-    client_kwargs: Dict[str, Any] = {"api_key": api_key, "base_url": base_url}
+    # SDK内部リトライは1回に制限（Retry-Afterの長い待ちが多重リトライで膨らむのを防ぐ）
+    client_kwargs: Dict[str, Any] = {"api_key": api_key, "base_url": base_url, "max_retries": 1}
     if base_url and "openrouter" in base_url:
         # OpenRouterのアプリ帰属ヘッダ（ダッシュボードでの利用元識別用）
         client_kwargs["default_headers"] = {
@@ -623,8 +624,12 @@ def main():
             logging.warning("モデル %s の出力を解析できませんでした。次の候補を試します。出力(先頭300文字): %s",
                             candidate, snippet)
     except Exception as e:
-        # 残高切れ・認証設定ミスは環境側の問題なのでCIを失敗させず、通知して正常終了する
+        # 残高切れ・認証設定ミス・レートリミットは環境側の問題なのでCIを失敗させず、通知して正常終了する
         reason = skip_reason(e)
+        if reason is None:
+            status = getattr(e, "status_code", None) or getattr(e, "status", None)
+            if status == 429:
+                reason = "APIのレートリミット（時間をおいて再実行してください）"
         if reason:
             logging.warning("%s のためレビューをスキップします: %s", reason, e)
             post_comment_once(pr, f"### 🤖 AIレビューBot\n\n⚠️ {reason} のためレビューをスキップしました。")
