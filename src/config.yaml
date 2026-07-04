@@ -22,8 +22,9 @@ system_prompt: |
   Focus on correctness, security, readability, and tests.
 style: concise                # レビューのトーン
 # 出力トークン数上限。gpt-5等の推論モデルは思考トークンもここから消費するため
-# 小さすぎると本文が空になる。4000以上を推奨
-max_tokens: 8000
+# 小さすぎると本文が空になる（finish_reason=length のログが出る）。
+# OpenRouterではキーの残高/日次上限を超える値を指定すると402になる点にも注意
+max_tokens: 3000
 
 # ==== 動作スイッチ ====
 enable_inline: true           # true: インラインコメント / false: まとめコメントのみ
