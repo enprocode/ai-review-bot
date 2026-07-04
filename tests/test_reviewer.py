@@ -172,6 +172,27 @@ class SkipReasonTests(unittest.TestCase):
         self.assertIsNone(reviewer.skip_reason(self.FakeErr("server error", 500)))
 
 
+class ExtractRetryAfterTests(unittest.TestCase):
+    def test_reads_header_from_response(self):
+        class FakeResp:
+            headers = {"Retry-After": "12"}
+
+        class FakeErr(Exception):
+            response = FakeResp()
+
+        self.assertEqual(reviewer.extract_retry_after(FakeErr("x")), 12.0)
+
+    def test_reads_retry_after_seconds_from_message(self):
+        err = Exception("... 'retry_after_seconds': 45.2 ...")
+        self.assertEqual(reviewer.extract_retry_after(err), 45.2)
+
+    def test_falls_back_to_default_when_no_info(self):
+        self.assertEqual(reviewer.extract_retry_after(Exception("no info")), 30.0)
+
+    def test_caps_excessive_wait(self):
+        self.assertEqual(reviewer.extract_retry_after(Exception("'retry_after_seconds': 999")), 60.0)
+
+
 class ParseFindingsTests(unittest.TestCase):
     def test_unwraps_dict_with_findings_list(self):
         raw = json.dumps({"findings": [{"severity": "major", "file": "a.py", "line": 1, "title": "x"}]})

@@ -88,15 +88,40 @@ def skip_reason(e: Exception) -> Optional[str]:
     return None
 
 
+def extract_retry_after(e: Exception, default: float = 30.0, cap: float = 60.0) -> float:
+    """
+    例外からRetry-After秒数を取り出す。レスポンスヘッダになければ
+    エラーメッセージ内の retry_after_seconds を探す。見つからなければdefault。
+    CI実行時間が過度に伸びないようcapで上限を設ける。
+    """
+    header_val = None
+    resp = getattr(e, "response", None)
+    headers = getattr(resp, "headers", None) if resp is not None else None
+    if headers:
+        header_val = headers.get("Retry-After") or headers.get("retry-after")
+    if header_val is None:
+        m = re.search(r"retry_after_seconds['\"]?\s*:\s*([\d.]+)", str(e))
+        if m:
+            header_val = m.group(1)
+    try:
+        seconds = float(header_val) if header_val is not None else default
+    except (TypeError, ValueError):
+        seconds = default
+    return max(0.0, min(seconds, cap))
+
+
 def retry(fn, tries: int = 3, base_sleep: float = 1.0):
-    """指数バックオフ付きリトライ（4xxなど再試行しても無駄なエラーは即時raise）"""
+    """
+    指数バックオフ付きリトライ（4xxなど再試行しても無駄なエラーは即時raise）。
+    429（レートリミット）は呼び出し側でRetry-Afterを見て個別に扱うため対象外。
+    """
     for i in range(tries):
         try:
             return fn()
         except Exception as e:
             status = getattr(e, "status_code", None) or getattr(e, "status", None)
             retryable = status is None or (
-                isinstance(status, int) and (status in (408, 429) or status >= 500)
+                isinstance(status, int) and (status == 408 or status >= 500)
             )
             # クレジット/クォータ切れは再試行しても回復しない
             if skip_reason(e):
@@ -607,12 +632,27 @@ def main():
 
     # パース不能な出力（JSON不遵守）にも代替モデルで再試行する
     candidate_models = [model] + [m for m in fallback_models if m != model]
+    max_rate_limit_retries = 2  # レートリミット時、同一モデルへの追加試行回数
     raw_text, findings, parsed_successfully = "", [], False
     try:
         for candidate in candidate_models:
-            raw_text = call_llm_review(client, candidate, system_prompt, prompt_text,
-                                       max_output_tokens, fallback_models=fallback_models,
-                                       reasoning_effort=reasoning_effort)
+            for attempt in range(max_rate_limit_retries + 1):
+                try:
+                    raw_text = call_llm_review(client, candidate, system_prompt, prompt_text,
+                                               max_output_tokens, fallback_models=fallback_models,
+                                               reasoning_effort=reasoning_effort)
+                    break
+                except Exception as e:
+                    status = getattr(e, "status_code", None) or getattr(e, "status", None)
+                    # クレジット切れ等の429はskip_reoson()で判定済みのため再試行しない
+                    if status == 429 and skip_reason(e) is None and attempt < max_rate_limit_retries:
+                        wait = extract_retry_after(e)
+                        logging.warning(
+                            "モデル %s がレートリミットのため %.0f秒待って再試行します。（%s/%s）",
+                            candidate, wait, attempt + 1, max_rate_limit_retries)
+                        time.sleep(wait)
+                        continue
+                    raise
             if not raw_text.strip():
                 logging.warning("モデル %s のレスポンスが空でした。次の候補を試します。", candidate)
                 continue
@@ -624,12 +664,12 @@ def main():
             logging.warning("モデル %s の出力を解析できませんでした。次の候補を試します。出力(先頭300文字): %s",
                             candidate, snippet)
     except Exception as e:
-        # 残高切れ・認証設定ミス・レートリミットは環境側の問題なのでCIを失敗させず、通知して正常終了する
+        # 残高切れ・認証設定ミス・再試行し尽くしたレートリミットは環境側の問題なのでCIを失敗させず、通知して正常終了する
         reason = skip_reason(e)
         if reason is None:
             status = getattr(e, "status_code", None) or getattr(e, "status", None)
             if status == 429:
-                reason = "APIのレートリミット（時間をおいて再実行してください）"
+                reason = "APIのレートリミット（複数回再試行しても解消しませんでした）"
         if reason:
             logging.warning("%s のためレビューをスキップします: %s", reason, e)
             post_comment_once(pr, f"### 🤖 AIレビューBot\n\n⚠️ {reason} のためレビューをスキップしました。")
