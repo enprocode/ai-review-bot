@@ -30,12 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout caller repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: caller
 
       - name: Checkout ai-review-bot
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: enprocode/ai-review-bot
           path: ai-review-bot
