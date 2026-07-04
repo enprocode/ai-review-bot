@@ -559,10 +559,24 @@ def main():
         }
     client = OpenAI(**client_kwargs)
 
+    # パース不能な出力（JSON不遵守）にも代替モデルで再試行する
+    candidate_models = [model] + [m for m in fallback_models if m != model]
+    raw_text, findings, parsed_successfully = "", [], False
     try:
-        raw_text = call_llm_review(client, model, system_prompt, prompt_text,
-                                   max_output_tokens, fallback_models=fallback_models,
-                                   reasoning_effort=reasoning_effort)
+        for candidate in candidate_models:
+            raw_text = call_llm_review(client, candidate, system_prompt, prompt_text,
+                                       max_output_tokens, fallback_models=fallback_models,
+                                       reasoning_effort=reasoning_effort)
+            if not raw_text.strip():
+                logging.warning("モデル %s のレスポンスが空でした。次の候補を試します。", candidate)
+                continue
+            findings, parsed_successfully = parse_findings_from_text(raw_text, max_findings)
+            if parsed_successfully:
+                logging.info("モデル %s の出力から %s 件の指摘を抽出しました。", candidate, len(findings))
+                break
+            snippet = (raw_text[:300] + "…") if len(raw_text) > 300 else raw_text
+            logging.warning("モデル %s の出力を解析できませんでした。次の候補を試します。出力(先頭300文字): %s",
+                            candidate, snippet)
     except Exception as e:
         # 残高切れ・認証設定ミスは環境側の問題なのでCIを失敗させず、通知して正常終了する
         reason = skip_reason(e)
@@ -571,20 +585,14 @@ def main():
             post_comment_once(pr, f"### 🤖 AIレビューBot\n\n⚠️ {reason} のためレビューをスキップしました。")
             return
         raise
-    if not raw_text:
-        logging.error("OpenAIレスポンスが3回連続で空でした。レビュー結果を投稿できません。")
-        post_comment(pr, build_no_findings_body(
-            "モデルから有効な応答が得られませんでした。（3回再試行しても空のレスポンス）",
+
+    if not raw_text.strip():
+        logging.error("全候補モデルのレスポンスが空でした。レビュー結果を投稿できません。")
+        post_comment_once(pr, build_no_findings_body(
+            "モデルから有効な応答が得られませんでした。（全候補モデルで空のレスポンス）",
             parsed_successfully=False,
         ))
         return
-
-    findings, parsed_successfully = parse_findings_from_text(raw_text, max_findings)
-    if parsed_successfully:
-        logging.info("モデル出力から %s 件の指摘を抽出しました。", len(findings))
-    else:
-        snippet = (raw_text[:300] + "…") if raw_text and len(raw_text) > 300 else (raw_text or "(空)")
-        logging.warning("モデル出力から有効な指摘を抽出できませんでした。出力(先頭300文字): %s", snippet)
 
     if not findings:
         # パース失敗時はモデルの生テキストをPRに投稿しない（先頭300文字はログ出力済み）

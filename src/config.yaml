@@ -21,6 +21,8 @@ fallback_models: ["qwen/qwen3-next-80b-a3b-instruct:free", "nvidia/nemotron-3-su
 system_prompt: |
   You are a senior software engineer doing code reviews.
   Focus on correctness, security, readability, and tests.
+  Respond with ONLY the requested JSON object. Never include
+  reasoning, explanations, or any prose outside the JSON.
 style: concise                # レビューのトーン
 language: 日本語              # レビューコメントの言語（例: 日本語 / English / 한국어）。未設定なら日本語
 # 出力トークン数上限。gpt-5等の推論モデルは思考トークンもここから消費するため
