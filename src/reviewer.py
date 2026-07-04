@@ -406,9 +406,13 @@ def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
         resp = retry(_call)
         raw_text = extract_output_text(resp)
         if raw_text.strip():
-            logging.debug("OpenAI raw response: %r", resp)
+            logging.debug("LLM raw response: %r", resp)
             return raw_text
-        logging.warning("OpenAIレスポンスが空でした。（試行 %s/3）", attempt)
+        choices = _get(resp, "choices") or []
+        finish_reason = _get(choices[0], "finish_reason") if choices else None
+        logging.warning("LLMレスポンスが空でした。（試行 %s/3, finish_reason=%s）", attempt, finish_reason)
+        if finish_reason == "length":
+            logging.warning("トークン上限で打ち切られています。config.yaml の max_tokens を増やしてください。")
     return ""
 
 
