@@ -453,23 +453,99 @@ def post_inline_reviews(pr, findings, batch_size, changed_files, marker: str = "
         post_comment(pr, fallback_bodies[0] + suffix)
 
 
+# Structured Outputs用スキーマ（https://openrouter.ai/docs/features/structured-outputs）
+# strict指定によりモデル出力をスキーマに強制し、JSON不遵守による
+# 誤った指摘・無駄な再試行トークンを構造的に防ぐ。
+FINDINGS_SCHEMA: Dict[str, Any] = {
+    "name": "code_review_findings",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "severity": {"type": "string",
+                                     "enum": ["CRITICAL", "MAJOR", "MINOR", "SUGGESTION"]},
+                        "file": {"type": "string"},
+                        "line": {"type": ["integer", "null"]},
+                        "title": {"type": "string"},
+                        "detail": {"type": "string"},
+                        "fix": {"type": "string"},
+                    },
+                    "required": ["severity", "file", "line", "title", "detail", "fix"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["findings"],
+        "additionalProperties": False,
+    },
+}
+
+VERIFICATION_SCHEMA: Dict[str, Any] = {
+    "name": "finding_verification",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "index": {"type": "integer"},
+                        "valid": {"type": "boolean"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["index", "valid", "reason"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["results"],
+        "additionalProperties": False,
+    },
+}
+
+
+def log_token_usage(resp: Any, purpose: str):
+    """コスト可視化のためトークン使用量をログに残す"""
+    usage = _get(resp, "usage")
+    if usage:
+        logging.info("トークン使用量(%s): prompt=%s, completion=%s, total=%s", purpose,
+                     _get(usage, "prompt_tokens"), _get(usage, "completion_tokens"),
+                     _get(usage, "total_tokens"))
+
+
 def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
                     max_output_tokens: Optional[int],
                     fallback_models: Optional[List[str]] = None,
-                    reasoning_effort: Optional[str] = None) -> str:
+                    reasoning_effort: Optional[str] = None,
+                    response_schema: Optional[Dict[str, Any]] = None,
+                    purpose: str = "review") -> str:
     """
     Chat Completions API（OpenAI互換）を呼び、モデル出力テキストを返す。
-    空レスポンスは最大3回まで再取得し、それでも空なら "" を返す。
+    response_schema指定時はStructured Outputs（strictスキーマ強制）を使い、
+    未対応プロバイダでは json_object → 無指定 へ段階的にフォールバックする。
+    トークン上限による打ち切り(finish_reason=length)は同一リクエストを
+    再送しても結果が変わらないため再試行しない（トークン節約）。
     """
     messages: List[Dict[str, Any]] = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt_text})
 
+    if response_schema:
+        response_format: Dict[str, Any] = {"type": "json_schema", "json_schema": response_schema}
+    else:
+        response_format = {"type": "json_object"}
     request_kwargs: Dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "response_format": {"type": "json_object"},
+        "response_format": response_format,
     }
     if max_output_tokens:
         request_kwargs["max_completion_tokens"] = max_output_tokens
@@ -485,7 +561,12 @@ def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
             return client.chat.completions.create(**request_kwargs)
         except Exception as exc:
             msg = str(exc)
-            # OpenAI互換プロバイダごとの差異を吸収するフォールバック
+            # OpenAI互換プロバイダごとの差異を吸収する段階的フォールバック
+            fmt = request_kwargs.get("response_format") or {}
+            if ("json_schema" in msg or "structured" in msg.lower()) and fmt.get("type") == "json_schema":
+                logging.warning("json_schema 未対応のため、json_object にフォールバックします。")
+                request_kwargs["response_format"] = {"type": "json_object"}
+                return _call()
             if "response_format" in msg and "response_format" in request_kwargs:
                 logging.warning("response_format 未対応のため、通常のテキスト応答にフォールバックします。")
                 request_kwargs.pop("response_format")
@@ -500,17 +581,20 @@ def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
                 return _call()
             raise
 
-    for attempt in range(1, 4):
+    for attempt in range(1, 3):
         resp = retry(_call)
+        log_token_usage(resp, purpose)
         raw_text = extract_output_text(resp)
         if raw_text.strip():
             logging.debug("LLM raw response: %r", resp)
             return raw_text
         choices = _get(resp, "choices") or []
         finish_reason = _get(choices[0], "finish_reason") if choices else None
-        logging.warning("LLMレスポンスが空でした。（試行 %s/3, finish_reason=%s）", attempt, finish_reason)
+        logging.warning("LLMレスポンスが空でした。（試行 %s/2, finish_reason=%s）", attempt, finish_reason)
         if finish_reason == "length":
+            # 同じリクエストを再送しても再び打ち切られるだけなので、トークンを消費せず打ち切る
             logging.warning("トークン上限で打ち切られています。config.yaml の max_tokens を増やしてください。")
+            break
     return ""
 
 
@@ -643,7 +727,9 @@ def verify_findings_for_file(client, model: str, file_path: str, content: str,
     try:
         raw = call_llm_review(client, model, "", prompt,
                               max_output_tokens=max_output_tokens,
-                              reasoning_effort=reasoning_effort)
+                              reasoning_effort=reasoning_effort,
+                              response_schema=VERIFICATION_SCHEMA,
+                              purpose="verification")
     except Exception as e:
         logging.warning("指摘の再検証に失敗したため、対象の指摘 %s 件を破棄します(%s): %s",
                         len(findings), file_path, e)
@@ -826,7 +912,8 @@ def main():
                 try:
                     raw_text = call_llm_review(client, candidate, system_prompt, prompt_text,
                                                max_output_tokens, fallback_models=fallback_models,
-                                               reasoning_effort=reasoning_effort)
+                                               reasoning_effort=reasoning_effort,
+                                               response_schema=FINDINGS_SCHEMA)
                     break
                 except Exception as e:
                     status = getattr(e, "status_code", None) or getattr(e, "status", None)
