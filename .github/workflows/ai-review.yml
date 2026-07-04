@@ -43,9 +43,12 @@ jobs:
       - name: Sync ai-review-bot to current PR commit
         if: ${{ github.repository == 'enprocode/ai-review-bot' && inputs.pr_number }}
         working-directory: ai-review-bot
+        env:
+          # run: スクリプトへの ${{ }} 直接埋め込みはスクリプトインジェクションの標的になり得るため env 経由にする
+          PR_NUMBER_INPUT: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
-          git fetch origin "refs/pull/${{ inputs.pr_number }}/head" --depth=1
+          git fetch origin "refs/pull/${PR_NUMBER_INPUT}/head" --depth=1
           git checkout --detach FETCH_HEAD
 
       - name: Setup Python
@@ -75,9 +78,10 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           REVIEW_PROMPT: ${{ inputs.review_prompt }}
+          PR_NUMBER_INPUT: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
-          PR_NUMBER="${{ inputs.pr_number }}"
+          PR_NUMBER="$PR_NUMBER_INPUT"
           if [ -z "$PR_NUMBER" ]; then
             PR_NUMBER="$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")"
           fi
