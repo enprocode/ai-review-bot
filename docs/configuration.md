@@ -17,7 +17,9 @@
 |------|------|----|
 | `model` | 使用モデル名（OpenRouterでは `プロバイダ名/モデル名` 形式） | `openai/gpt-5` |
 | `base_url` | OpenAI互換エンドポイント。未設定ならOpenAI公式 | `https://openrouter.ai/api/v1` |
-| `fallback_models` | `model` が利用不可のとき自動切替する代替モデルのリスト（OpenRouterのみ） | `["anthropic/claude-sonnet-5"]` |
+| `fallback_models` | `model` が利用不可・出力がJSON形式に従わないときに自動切替する代替モデルのリスト | `["anthropic/claude-sonnet-5"]` |
+| `reasoning_effort` | 推論モデルの思考トークン量（`low`/`medium`/`high`）。未対応モデルでは自動で外して再試行 | `low` |
+| `language` | レビューコメントの言語。未設定なら日本語 | `日本語` / `English` |
 | `system_prompt` | レビューの基本方針 | （config.yaml参照） |
 | `style` | レビューのトーン | `concise` |
 | `language` | レビューコメントの言語。未設定なら日本語 | `日本語` / `English` |
@@ -54,6 +56,7 @@ OpenRouter はキー1つで GPT / Claude / Gemini など複数のモデルを切
    ```
 
    モデル名の例: `openai/gpt-5`, `anthropic/claude-sonnet-5`, `google/gemini-2.5-pro`。利用可能な一覧は [openrouter.ai/models](https://openrouter.ai/models) を参照。
+   `openai/gpt-latest` のようなエイリアスを使うと、コード変更なしに最新版へ自動追従します（[OpenRouter Quickstart](https://openrouter.ai/docs/quickstart)参照）。
 
 利用状況・コストは [Activity](https://openrouter.ai/activity) ページで確認できます（Botからの呼び出しは `ai-review-bot` として表示されます）。
 

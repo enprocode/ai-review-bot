@@ -32,6 +32,7 @@ fail_level: MAJOR
 | [設定リファレンス](docs/configuration.md) | Secrets・config.yaml全キー・他プロバイダの使い方 |
 | [仕組みと運用](docs/architecture.md) | 処理の流れ・ワークフロー構成・安全設計・既知の制約 |
 | [開発ガイド](docs/development.md) | ローカル実行・テスト・ベストプラクティス |
+| [トラブルシューティング](docs/troubleshooting.md) | Botのコメント別の原因と対処 |
 
 ## ライセンス
 
