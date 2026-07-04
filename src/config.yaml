@@ -25,7 +25,7 @@ style: concise                # レビューのトーン
 # 出力トークン数上限。gpt-5等の推論モデルは思考トークンもここから消費するため
 # 小さすぎると本文が空になる（finish_reason=length のログが出る）。
 # OpenRouterではキーの残高/日次上限を超える値を指定すると402になる点にも注意
-max_tokens: 3000
+max_tokens: 1500
 # 推論モデル（gpt-5等）の思考トークン量: low / medium / high。
 # max_tokens が小さい環境では low にしないと思考だけで上限に達し本文が空になる
 reasoning_effort: low
@@ -39,9 +39,9 @@ include_globs: ["**/*.py", "**/*.yml", "**/*.yaml", "**/*.toml", "**/*.json"]
 exclude_globs: ["**/.venv/**", "**/dist/**", "**/build/**", "**/*.lock", "**/node_modules/**"]
 max_files: 200                # 1PRあたりの対象ファイル数上限
 
-# ==== LLMへ渡す情報量のリミット ====
-max_diff_chars: 8000          # diffの文字数上限（超過分は切り詰め）
-max_findings: 50              # 指摘の最大件数
+# ==== LLMへ渡す情報量のリミット（トークン節約設定） ====
+max_diff_chars: 4000          # diffの文字数上限（超過分は切り詰め）
+max_findings: 10              # 指摘の最大件数（プロンプトでモデルにも指示される）
 batch_size: 20                # インラインコメントの1レビューあたり投稿件数
 
 # ==== ログ ====
