@@ -1,15 +1,15 @@
-# 🤖 AI Review Bot
+# AI Review Bot
 [![Self AI Review](https://github.com/enprocode/ai-review-bot/actions/workflows/self-ai-review.yml/badge.svg)](https://github.com/enprocode/ai-review-bot/actions/workflows/self-ai-review.yml)
 
-GitHub Actions ベースの **AIコードレビューBot** です。
+GitHub Actions ベースの AIコードレビューBot です。
 Pull Request の差分をLLMで解析し、バグリスク・設計・可読性などの指摘を自動でコメントします。
 
 ## 主な機能
 
-- ✅ PRごとに自動コードレビューコメントを投稿（インライン/まとめの切替可）
-- 🔌 OpenAIだけでなく、OpenAI互換プロバイダ（OpenRouter / Azure / Groq / Ollama等）に対応
-- 🔒 フォークPR・Draft PR・マージ時は実行しないセーフ設計
-- 🚦 指摘の重大度に応じてCIを失敗させる `fail_level` 設定
+- PRごとに自動コードレビューコメントを投稿（インライン/まとめの切替可）
+- OpenAIだけでなく、OpenAI互換プロバイダ（OpenRouter / Azure / Groq / Ollama等）に対応
+- フォークPR・Draft PR・マージ時は実行しないセーフ設計
+- 指摘の重大度に応じてCIを失敗させる `fail_level` 設定
 
 ## クイックスタート
 
@@ -38,4 +38,4 @@ MIT License
 
 ## コントリビューション
 
-Issue・PR歓迎です！レビュー観点の拡張や新しいモデル対応など、ぜひご協力ください。
+Issue・PR歓迎です。レビュー観点の拡張や新しいモデル対応など、ぜひご協力ください。

@@ -7,7 +7,7 @@
 | `LLM_API_KEY` | LLMのAPIキー。旧名 `OPENAI_API_KEY` も後方互換で利用可 |
 | `GH_APP_ID` / `GH_APP_PRIVATE_KEY` | コメント投稿用 GitHub App の認証情報 |
 
-> 🔒 フォークPRにはSecretsは渡されません（GitHub Actionsの仕様）。
+> フォークPRにはSecretsは渡されません（GitHub Actionsの仕様）。
 
 ## `src/config.yaml`
 
