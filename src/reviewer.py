@@ -32,26 +32,13 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
 
 
 def extract_output_text(resp: Any) -> str:
-    """
-    OpenAI Responses API の返却オブジェクトからテキストを抽出する。
-    output_text が無い場合も想定し、content の text を走査する。
-    """
-    text = _get(resp, "output_text")
-    if text:
-        return str(text)
-    output = _get(resp, "output")
-    parts: List[str] = []
-    if output:
-        for item in output:
-            content = _get(item, "content")
-            if not content:
-                continue
-            for block in content:
-                piece = _get(block, "text")
-                if piece:
-                    parts.append(str(piece))
-    if parts:
-        return "\n".join(parts)
+    """Chat Completions API の返却オブジェクトからテキストを抽出する。"""
+    choices = _get(resp, "choices")
+    if choices:
+        message = _get(choices[0], "message")
+        content = _get(message, "content") if message else None
+        if content:
+            return str(content)
     return ""
 
 
@@ -140,10 +127,10 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
 
     return textwrap.dedent(f"""
     あなたは熟練したエンジニアとして、以下のPR差分をレビューしてください。{style_directive}
-    出力は必ず ```json フェンス内に JSON配列のみ``` で返してください。
+    出力は必ず次のJSONスキーマに従うJSONオブジェクトのみで返してください。
 
     JSONスキーマ:
-    [
+    {{"findings": [
       {{
         "severity": "CRITICAL" | "MAJOR" | "MINOR" | "SUGGESTION",
         "file": "相対パス（例: src/main.py）",
@@ -152,7 +139,7 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
         "detail": "背景/根拠を簡潔に記載",
         "fix": "具体的な修正案（任意）"
       }}
-    ]
+    ]}}
 
     【変更ファイル】
     {file_list}
@@ -362,10 +349,10 @@ def post_inline_reviews(pr, findings, batch_size, changed_files):
         post_comment(pr, fallback_bodies[0])
 
 
-def call_openai_review(client, model: str, system_prompt: str, prompt_text: str,
-                       max_output_tokens: Optional[int]) -> str:
+def call_llm_review(client, model: str, system_prompt: str, prompt_text: str,
+                    max_output_tokens: Optional[int]) -> str:
     """
-    OpenAI Responses API を呼び、モデル出力テキストを返す。
+    Chat Completions API（OpenAI互換）を呼び、モデル出力テキストを返す。
     空レスポンスは最大3回まで再取得し、それでも空なら "" を返す。
     """
     messages: List[Dict[str, Any]] = []
@@ -375,20 +362,26 @@ def call_openai_review(client, model: str, system_prompt: str, prompt_text: str,
 
     request_kwargs: Dict[str, Any] = {
         "model": model,
-        "input": messages,
-        "text": {"format": {"type": "json_object"}},
+        "messages": messages,
+        "response_format": {"type": "json_object"},
     }
     if max_output_tokens:
-        request_kwargs["max_output_tokens"] = max_output_tokens
+        request_kwargs["max_completion_tokens"] = max_output_tokens
 
     def _call():
         try:
-            return client.responses.create(**request_kwargs)
-        except TypeError as exc:
-            if "text" in str(exc):
-                logging.warning("text.format パラメータがサポートされていないため、通常のテキスト応答にフォールバックします。")
-                request_kwargs.pop("text", None)
-                return client.responses.create(**request_kwargs)
+            return client.chat.completions.create(**request_kwargs)
+        except Exception as exc:
+            msg = str(exc)
+            # OpenAI互換プロバイダごとの差異を吸収するフォールバック
+            if "response_format" in msg and "response_format" in request_kwargs:
+                logging.warning("response_format 未対応のため、通常のテキスト応答にフォールバックします。")
+                request_kwargs.pop("response_format")
+                return _call()
+            if "max_completion_tokens" in msg and "max_completion_tokens" in request_kwargs:
+                logging.warning("max_completion_tokens 未対応のため、max_tokens で再試行します。")
+                request_kwargs["max_tokens"] = request_kwargs.pop("max_completion_tokens")
+                return _call()
             raise
 
     for attempt in range(1, 4):
@@ -445,6 +438,7 @@ def main():
         raise RuntimeError("GITHUB_TOKEN が見つかりません。")
 
     model = cfg.get("model", DEFAULT_MODEL)
+    base_url = (cfg.get("base_url") or "").strip() or None
     system_prompt = (cfg.get("system_prompt") or "").strip()
     style = (cfg.get("style") or "").strip()
     enable_inline = bool(cfg.get("enable_inline", True))
@@ -481,10 +475,10 @@ def main():
     logging.info("レビュー対象ファイル数: %s (取得 %s, 上限 %s)", len(files), len(files_all), max_files)
 
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
-    client = OpenAI(api_key=openai_key)
+    client = OpenAI(api_key=openai_key, base_url=base_url)
 
     try:
-        raw_text = call_openai_review(client, model, system_prompt, prompt_text, max_output_tokens)
+        raw_text = call_llm_review(client, model, system_prompt, prompt_text, max_output_tokens)
     except Exception as e:
         # クォータ切れは環境側の問題なのでCIを失敗させず、通知して正常終了する
         if "insufficient_quota" in str(e):

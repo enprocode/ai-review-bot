@@ -49,6 +49,7 @@ Pull Request を自動解析し、設計・可読性・バグリスクなどをA
 | キー | 説明 | 例 |
 |------|------|----|
 | `model` | 使用モデル名 | `gpt-5` |
+| `base_url` | OpenAI互換エンドポイント（OpenRouter / Azure / Groq / Ollama等）。未設定ならOpenAI公式 | `https://openrouter.ai/api/v1` |
 | `max_tokens` | 出力トークン数上限 | `800` |
 | `style` | レビューのトーン | `concise` |
 | `enable_inline` | インラインコメント有効化 | `true` |

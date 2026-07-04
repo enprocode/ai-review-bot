@@ -101,25 +101,18 @@ class NoFindingsBodyTests(unittest.TestCase):
 
 
 class ExtractOutputTextTests(unittest.TestCase):
-    def test_uses_output_text_when_available(self):
-        resp = SimpleNamespace(output_text="hello")
+    def test_extracts_chat_completion_content(self):
+        resp = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="hello"))]
+        )
         self.assertEqual(reviewer.extract_output_text(resp), "hello")
 
-    def test_falls_back_to_nested_content(self):
-        resp = {
-            "output": [
-                {
-                    "content": [
-                        {"text": "first"},
-                        {"text": "second"},
-                    ]
-                }
-            ]
-        }
-        self.assertEqual(reviewer.extract_output_text(resp), "first\nsecond")
+    def test_extracts_from_dict_response(self):
+        resp = {"choices": [{"message": {"content": "hello"}}]}
+        self.assertEqual(reviewer.extract_output_text(resp), "hello")
 
     def test_returns_empty_string_when_no_text(self):
-        resp = {"output": [{"content": [{}]}]}
+        resp = {"choices": [{"message": {"content": None}}]}
         self.assertEqual(reviewer.extract_output_text(resp), "")
 
 
