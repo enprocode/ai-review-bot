@@ -124,6 +124,14 @@ class ExtractOutputTextTests(unittest.TestCase):
 
 
 class ParseFindingsTests(unittest.TestCase):
+    def test_unwraps_dict_with_findings_list(self):
+        raw = json.dumps({"findings": [{"severity": "major", "file": "a.py", "line": 1, "title": "x"}]})
+        findings, parsed = reviewer.parse_findings_from_text(raw, max_findings=5)
+        self.assertTrue(parsed)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["file"], "a.py")
+
+
     def test_parses_plain_json_string(self):
         raw = json.dumps([{
             "severity": "major",

@@ -61,16 +61,24 @@ def load_config() -> dict:
     with open(cfg_path, "r", encoding="utf-8") as f:
         raw = f.read()
     expanded = os.path.expandvars(raw)
-    return yaml.safe_load(expanded)
+    cfg = yaml.safe_load(expanded)
+    # 環境変数が未設定だと ${VAR} が文字列のまま残るため、未設定扱いにする
+    for key in ("openai_api_key", "github_token"):
+        val = cfg.get(key)
+        if isinstance(val, str) and re.fullmatch(r"\$\{[^}]+\}", val.strip()):
+            cfg[key] = None
+    return cfg
 
 
 def retry(fn, tries: int = 3, base_sleep: float = 1.0):
-    """指数バックオフ付きリトライ"""
+    """指数バックオフ付きリトライ（4xxなど再試行しても無駄なエラーは即時raise）"""
     for i in range(tries):
         try:
             return fn()
         except Exception as e:
-            if i == tries - 1:
+            status = getattr(e, "status_code", None) or getattr(e, "status", None)
+            retryable = status is None or status == 429 or status >= 500
+            if not retryable or i == tries - 1:
                 raise
             time.sleep(base_sleep * (2 ** i))
 
@@ -91,11 +99,24 @@ def to_inline_body(f: Dict[str, Any]) -> str:
     return "\n\n".join([p for p in parts if p]).strip()
 
 
+def to_bullet(f: Dict[str, Any]) -> str:
+    """まとめコメント用の箇条書き1件を整形（インライン化できない指摘にも使う）"""
+    where = f'`{f["file"]}`' + (f' L{f["line"]}' if f["line"] else "")
+    bullet = f'- {SEVERITY_EMOJI[f["severity"]]} **{f["severity"]}** {where} — {f["title"]}\n  {f["detail"]}'
+    if f["fix"]:
+        bullet += f'\n  **修正案:** {f["fix"]}'
+    return bullet
+
+
+def post_comment(pr, body: str):
+    retry(lambda: pr.create_review(body=body, event="COMMENT"))
+
+
 def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[str] = None) -> str:
     filenames = [f.filename for f in files]
     file_list = "\n".join(f"- {name}" for name in filenames)
 
-    patches, used = [], 0
+    patches, used, truncated = [], 0, False
     for f in files:
         patch = f.patch or ""
         block = f"\n\n=== {f.filename} ===\n{patch}"
@@ -105,10 +126,13 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
             if remaining > 0:
                 patches.append(block[:remaining])
                 used += remaining
+            truncated = True
             break
         patches.append(block)
         used += block_len
     diff_snippet = "".join(patches) if patches else "(変更差分は取得できませんでした)"
+    if truncated:
+        diff_snippet += "\n\n(注意: 差分は文字数上限で途中まで切り詰められています)"
     style_directive = f"\nレビューは「{style}」なトーンでお願いします。" if style else ""
 
     return textwrap.dedent(f"""
@@ -141,7 +165,9 @@ def build_prompt(files, user_prompt: str, max_diff_chars: int, style: Optional[s
 def normalize_findings(data: Any, max_findings: int) -> List[Dict[str, Any]]:
     findings: List[Dict[str, Any]] = []
     if isinstance(data, dict):
-        data = [data]
+        # json_object形式で {"findings": [...]} のようにラップされた場合は中の配列を使う
+        inner = next((v for v in data.values() if isinstance(v, list)), None)
+        data = inner if inner is not None else [data]
     if not isinstance(data, list):
         return findings
 
@@ -293,9 +319,7 @@ def dedup_existing(pr, inline_candidates, fallback_texts):
     return filtered_inline, filtered_fallback
 
 
-def post_inline_reviews(pr, findings, batch_size):
-    # 変更ファイル取得（positionマップ作成用）
-    changed_files = list(pr.get_files())
+def post_inline_reviews(pr, findings, batch_size, changed_files):
     changed_paths = {f.filename for f in changed_files}
     pos_map = build_position_map(changed_files)
 
@@ -315,11 +339,7 @@ def post_inline_reviews(pr, findings, batch_size):
             inline.append({"path": path, "position": pos, "body": body})
         else:
             # フォールバック：まとめコメントに回す
-            where = f'`{path}`' + (f' L{line}' if line else "")
-            fallback_lines.append(
-                f'- {SEVERITY_EMOJI[f["severity"]]} **{f["severity"]}** {where} — {f["title"]}\n'
-                f'  {f["detail"]}' + (f'\n  **修正案:** {f["fix"]}' if f["fix"] else "")
-            )
+            fallback_lines.append(to_bullet(f))
 
     fallback_body = None
     if fallback_lines:
@@ -336,7 +356,46 @@ def post_inline_reviews(pr, findings, batch_size):
         retry(lambda: pr.create_review(body="", event="COMMENT", comments=batch))
 
     if fallback_bodies:
-        retry(lambda: pr.create_review(body=fallback_bodies[0], event="COMMENT"))
+        post_comment(pr, fallback_bodies[0])
+
+
+def call_openai_review(client, model: str, system_prompt: str, prompt_text: str,
+                       max_output_tokens: Optional[int]) -> str:
+    """
+    OpenAI Responses API を呼び、モデル出力テキストを返す。
+    空レスポンスは最大3回まで再取得し、それでも空なら "" を返す。
+    """
+    messages: List[Dict[str, Any]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt_text})
+
+    request_kwargs: Dict[str, Any] = {
+        "model": model,
+        "input": messages,
+        "text": {"format": {"type": "json_object"}},
+    }
+    if max_output_tokens:
+        request_kwargs["max_output_tokens"] = max_output_tokens
+
+    def _call():
+        try:
+            return client.responses.create(**request_kwargs)
+        except TypeError as exc:
+            if "text" in str(exc):
+                logging.warning("text.format パラメータがサポートされていないため、通常のテキスト応答にフォールバックします。")
+                request_kwargs.pop("text", None)
+                return client.responses.create(**request_kwargs)
+            raise
+
+    for attempt in range(1, 4):
+        resp = retry(_call)
+        raw_text = extract_output_text(resp)
+        if raw_text.strip():
+            logging.debug("OpenAI raw response: %r", resp)
+            return raw_text
+        logging.warning("OpenAIレスポンスが空でした。（試行 %s/3）", attempt)
+    return ""
 
 
 def maybe_fail_job(findings, fail_level):
@@ -413,7 +472,7 @@ def main():
     files = filter_files(files_all, include_globs, exclude_globs, max_files)
     if not files:
         logging.info("対象ファイルが見つからなかったためレビューコメントを投稿します。")
-        retry(lambda: pr.create_review(body="### 🤖 AIレビューBot\n\n対象ファイルがありません。", event="COMMENT"))
+        post_comment(pr, "### 🤖 AIレビューBot\n\n対象ファイルがありません。")
         return
 
     logging.info("レビュー対象ファイル数: %s (取得 %s, 上限 %s)", len(files), len(files_all), max_files)
@@ -421,59 +480,14 @@ def main():
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None)
     client = OpenAI(api_key=openai_key)
 
-    def format_message(role: str, text: str) -> Dict[str, Any]:
-        block_type = "input_text"
-        if role == "assistant":
-            block_type = "output_text"
-        return {
-            "role": role,
-            "content": [
-                {
-                    "type": block_type,
-                    "text": text,
-                }
-            ],
-        }
-
-    messages: List[Dict[str, Any]] = []
-    if system_prompt:
-        messages.append(format_message("system", system_prompt))
-    messages.append(format_message("user", prompt_text))
-
-    request_kwargs: Dict[str, Any] = {
-        "model": model,
-        "input": messages,
-        "text": {"format": {"type": "json_object"}},
-    }
-    if max_output_tokens:
-        request_kwargs["max_output_tokens"] = max_output_tokens
-    raw_text = ""
-    for attempt in range(1, 4):
-        def _call_openai():
-            try:
-                return client.responses.create(**request_kwargs)
-            except TypeError as exc:
-                if "text" in str(exc):
-                    logging.warning("text.format パラメータがサポートされていないため、通常のテキスト応答にフォールバックします。")
-                    request_kwargs.pop("text", None)
-                    return client.responses.create(**request_kwargs)
-                raise
-
-        resp = retry(_call_openai)
-        raw_text = extract_output_text(resp)
-        if raw_text.strip():
-            break
-        logging.warning("OpenAIレスポンスが空でした。（試行 %s/3）", attempt)
-    else:
+    raw_text = call_openai_review(client, model, system_prompt, prompt_text, max_output_tokens)
+    if not raw_text:
         logging.error("OpenAIレスポンスが3回連続で空でした。レビュー結果を投稿できません。")
-        fallback_body = build_no_findings_body(
+        post_comment(pr, build_no_findings_body(
             "モデルから有効な応答が得られませんでした。（3回再試行しても空のレスポンス）",
             parsed_successfully=False,
-        )
-        retry(lambda: pr.create_review(body=fallback_body, event="COMMENT"))
+        ))
         return
-    if logging.getLogger().isEnabledFor(logging.DEBUG):
-        logging.debug("OpenAI raw response: %r", resp)
 
     findings, parsed_successfully = parse_findings_from_text(raw_text, max_findings)
     if parsed_successfully:
@@ -483,23 +497,17 @@ def main():
         logging.warning("モデル出力から有効な指摘を抽出できませんでした。出力(先頭300文字): %s", snippet)
 
     if not findings:
-        review_body = build_no_findings_body(raw_text, parsed_successfully)
-        retry(lambda: pr.create_review(body=review_body, event="COMMENT"))
+        post_comment(pr, build_no_findings_body(raw_text, parsed_successfully))
         logging.info("指摘なしコメントを投稿しました。（parsed=%s）", parsed_successfully)
         return
 
     if enable_inline:
         logging.info("インラインコメントモードで %s 件の指摘を投稿します。", len(findings))
-        post_inline_reviews(pr, findings, batch_size)
+        post_inline_reviews(pr, findings, batch_size, files_all)
     else:
         logging.info("まとめコメントモードで %s 件の指摘を投稿します。", len(findings))
-        bullets = []
-        for f in findings:
-            where = f'`{f["file"]}`' + (f' L{f["line"]}' if f["line"] else "")
-            bullets.append(f'- {SEVERITY_EMOJI[f["severity"]]} **{f["severity"]}** {where} — {f["title"]}\n  {f["detail"]}')
-            if f["fix"]:
-                bullets.append(f'  **修正案:** {f["fix"]}')
-        retry(lambda: pr.create_review(body="### 🤖 AIレビューBot\n\n" + "\n".join(bullets), event="COMMENT"))
+        bullets = [to_bullet(f) for f in findings]
+        post_comment(pr, "### 🤖 AIレビューBot\n\n" + "\n".join(bullets))
 
     maybe_fail_job(findings, fail_level)
 

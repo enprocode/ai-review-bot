@@ -70,6 +70,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          REVIEW_PROMPT: ${{ inputs.review_prompt }}
         run: |
           set -euo pipefail
           PR_NUMBER="${{ inputs.pr_number }}"
@@ -84,4 +85,4 @@ jobs:
           python ai-review-bot/src/reviewer.py \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
-            --prompt "${{ inputs.review_prompt }}"
+            --prompt "$REVIEW_PROMPT"
