@@ -12,7 +12,7 @@
 ## ワークフロー構成
 
 - [`self-ai-review.yml`](../.github/workflows/self-ai-review.yml) — このリポジトリ自身専用のトリガー役。ユニットテスト実行後、draft/フォークPR/Dependabotを除外して再利用ワークフローを呼び出します。
-- [`ai-review.yml`](../.github/workflows/ai-review.yml) — 実処理（`workflow_call`）。呼び出し元とは別に `enprocode/ai-review-bot` 自体をcheckoutして `src/reviewer.py` を1回実行し、GitHub Appトークンでコメントを投稿します。`secrets: inherit` は使わず必要なシークレットのみ渡す設計です。
+- [`ai-review.yml`](../.github/workflows/ai-review.yml) — 実処理（`workflow_call`）。呼び出し元とは別に `enprocode/ai-review-bot` 自体をcheckoutして `src/reviewer.py` を1回実行し、コメントを投稿します。`secrets: inherit` は使わず必要なシークレットのみ渡す設計です。`GH_APP_ID` / `GH_APP_PRIVATE_KEY` を渡した場合のみ独自GitHub App名義で投稿し、未指定なら標準の `GITHUB_TOKEN`（`github-actions[bot]`名義）にフォールバックします（導入時にGitHub Appの作成・インストールを不要にするため）。
 
 `ai-review.yml` は他リポジトリからの直接参照（`uses: enprocode/ai-review-bot/.github/workflows/ai-review.yml@<tag>`）を前提に設計されています。呼び出し元は `src/` や `ai-review.yml` 自体をコピーする必要はなく、[`examples/caller-workflow.yml`](../examples/caller-workflow.yml) のような薄いワークフロー1枚だけで動作します。エントリポイントは単一の `src/reviewer.py`（`--repo` / `--pr` / `--prompt` / `--config-override`）です。
 

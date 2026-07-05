@@ -21,10 +21,11 @@ on:
       # 旧名（後方互換用）。LLM_API_KEY が未設定ならこちらを使用
       OPENAI_API_KEY:
         required: false
+      # 任意。指定時のみ独自GitHub Appの名前でコメント投稿する。未指定なら標準の GITHUB_TOKEN（github-actions[bot]）で投稿
       GH_APP_ID:
-        required: true
+        required: false
       GH_APP_PRIVATE_KEY:
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -72,6 +73,8 @@ jobs:
 
       - name: Generate GitHub App token
         id: app-token
+        # GH_APP_ID/GH_APP_PRIVATE_KEY 未設定時はスキップし、標準の GITHUB_TOKEN を使う（導入時の必須設定を減らすため）
+        if: ${{ secrets.GH_APP_ID != '' && secrets.GH_APP_PRIVATE_KEY != '' }}
         uses: tibdex/github-app-token@v2
         with:
           app_id: ${{ secrets.GH_APP_ID }}
@@ -81,7 +84,7 @@ jobs:
         env:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           REVIEW_PROMPT: ${{ inputs.review_prompt }}
           PR_NUMBER_INPUT: ${{ inputs.pr_number }}
           CONFIG_PATH_INPUT: ${{ inputs.config_path }}
