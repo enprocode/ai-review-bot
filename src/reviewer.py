@@ -23,6 +23,29 @@ SEVERITY_EMOJI = {
 }
 SEVERITY_ORDER = ["SUGGESTION", "MINOR", "MAJOR", "CRITICAL"]
 
+# language設定でISO 639-1相当の短いコードを許容するための変換表。
+# 未登録の値はそのままプロンプトに渡す（正式名称や他言語の直接指定も可能にするため）。
+LANGUAGE_ALIASES = {
+    "ja": "日本語",
+    "en": "English",
+    "ko": "한국어",
+    "zh": "简体中文",
+    "zh-tw": "繁體中文",
+    "es": "Español",
+    "fr": "Français",
+    "de": "Deutsch",
+    "pt": "Português",
+    "vi": "Tiếng Việt",
+    "id": "Bahasa Indonesia",
+    "th": "ภาษาไทย",
+}
+
+
+def resolve_language(value: str) -> str:
+    key = value.strip().lower()
+    return LANGUAGE_ALIASES.get(key, value.strip())
+
+
 # レビュー済みコミットを記録する不可視マーカー（GitHub上では表示されない）
 REVIEWED_MARKER_RE = re.compile(r"<!-- ai-review-bot:reviewed:([0-9a-f]{40}) -->")
 
@@ -932,7 +955,9 @@ def main():
 
     logging.info("レビュー対象ファイル数: %s (取得 %s, 上限 %s)", len(files), len(files_all), max_files)
 
-    language = args.language.strip() or (str(cfg.get("language") or "")).strip() or "日本語"
+    language = resolve_language(
+        args.language.strip() or (str(cfg.get("language") or "")).strip() or "日本語"
+    )
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None,
                                max_findings=max_findings, language=language)
     # SDK内部リトライは1回に制限（Retry-Afterの長い待ちが多重リトライで膨らむのを防ぐ）

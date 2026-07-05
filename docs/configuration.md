@@ -51,8 +51,10 @@
 
 ```yaml
 with:
-  language: English   # 例: English / 한국어。未指定なら config.yaml の設定（既定は日本語）
+  language: en   # 短いコード（ja/en/ko/zh/zh-tw/es/fr/de/pt/vi/id/th）または正式名称も可。未指定ならconfig.yamlの設定（既定は日本語）
 ```
+
+短いコードは大文字小文字を区別しません（`EN`でも可）。未対応のコードを指定した場合は、値をそのままプロンプトに渡します（`Italiano` のような正式名称を直接書くことも可能）。対応コードの一覧は [`resolve_language()`](../src/reviewer.py) の `LANGUAGE_ALIASES` を参照してください。
 
 `with.language` は `config_path` で指定した上書きファイル内の `language` よりも優先されます。
 

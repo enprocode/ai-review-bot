@@ -56,7 +56,7 @@ jobs:
 
 ### 4. 必要なら設定を上書き（任意）
 
-レビューコメントの**言語**だけは手順1のワークフローに `with.language: English` のように直接指定できます（省略なら既定は日本語）。
+レビューコメントの**言語**だけは手順1のワークフローに `with.language: en` のように短いコード（`ja`/`en`/`ko`等）で直接指定できます（省略なら既定は日本語）。詳細な対応コードは[設定リファレンス](docs/configuration.md#language-だけはワークフローの-with-からも指定可能)を参照してください。
 
 モデル・`fail_level`・対象ファイルglob等、それ以外の設定を変えたい場合は、自リポジトリに設定上書きファイル（例: `.github/ai-review-config.yml`）を作成し、手順1のワークフローに `with.config_path: .github/ai-review-config.yml` を追加してください（省略時はBot既定の設定を使用）。[`examples/ai-review-config.example.yml`](examples/ai-review-config.example.yml) も参照してください。
 
