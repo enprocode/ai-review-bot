@@ -5,7 +5,8 @@
 | 名前 | 説明 |
 |------|------|
 | `LLM_API_KEY` | LLMのAPIキー。旧名 `OPENAI_API_KEY` も後方互換で利用可 |
-| `GH_APP_ID` / `GH_APP_PRIVATE_KEY` | コメント投稿用 GitHub App の認証情報 |
+
+コメントは標準の `GITHUB_TOKEN`（`github-actions[bot]`名義）で投稿するため、GitHub Appの作成・インストールは不要です。
 
 > フォークPRにはSecretsは渡されません（GitHub Actionsの仕様）。
 
@@ -33,6 +34,16 @@
 | `max_findings` | 指摘の最大件数（モデルへの指示にも反映） | `10` |
 | `batch_size` | インラインコメントの1レビューあたり投稿件数 | `20` |
 | `log_level` | ログレベル | `INFO` |
+
+## 複数リポジトリでの使い回しとリポジトリごとの設定上書き
+
+`ai-review.yml` を `uses: enprocode/ai-review-bot/.github/workflows/ai-review.yml@<tag>` で参照して使う場合、既定では全呼び出し元リポジトリが `enprocode/ai-review-bot` 側の `src/config.yaml` を共有します。リポジトリごとに `model` / `fail_level` / `include_globs` 等を変えたい場合は次の手順で上書きできます。
+
+1. 呼び出し元リポジトリに上書き用YAMLファイルを作成（例: `.github/ai-review-config.yml`）。上書きしたいキーだけを書けばよく、書かなかったキーはBot既定値のまま使われます（[`examples/ai-review-config.example.yml`](../examples/ai-review-config.example.yml) 参照）。
+2. 呼び出し元ワークフローの `with.config_path` にそのファイルへの相対パスを指定（[`examples/caller-workflow.yml`](../examples/caller-workflow.yml) 参照）。
+3. `ai-review.yml` は呼び出し元リポジトリを `caller/` にcheckoutし、`caller/<config_path>` を `src/reviewer.py --config-override` に渡します。`load_config()` はBot既定の設定に対してこのファイルの内容を上書き（shallow merge）します。
+
+`llm_api_key` / `github_token` はSecrets経由で渡されるため、上書きファイルに書く必要はありません（書いても無視されます）。
 
 ## OpenAI以外のプロバイダを使う
 

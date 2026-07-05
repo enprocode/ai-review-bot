@@ -1,0 +1,16 @@
+# =============================================================
+# 呼び出し元リポジトリ用の設定上書きファイル（任意）
+# ここに書いたキーだけが ai-review-bot 既定の src/config.yaml を上書きします。
+# 書かなかったキーはBot既定値のまま使われます。
+# 全キーの説明は ai-review-bot の docs/configuration.md を参照。
+#
+# 使い方: このファイルを自リポジトリの .github/ai-review-config.yml として配置し、
+# caller-workflow.yml の with.config_path で指定してください。
+# llm_api_key / github_token（Secrets由来のキー）はここで上書きしないでください。
+# =============================================================
+
+model: anthropic/claude-sonnet-5
+fail_level: CRITICAL
+language: English
+include_globs: ["**/*.ts", "**/*.tsx"]
+max_findings: 5
