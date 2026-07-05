@@ -4,7 +4,6 @@ import json
 import textwrap
 import yaml
 import time
-import fnmatch
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
@@ -319,13 +318,42 @@ def parse_findings_from_text(raw_text: str, max_findings: int) -> Tuple[List[Dic
     return [], False
 
 
+def glob_match(path: str, pattern: str) -> bool:
+    """
+    config.yaml の include_globs/exclude_globs 用のパスマッチ。
+    fnmatch は "**" を特別扱いせず "/" をリテラル文字として要求するため、
+    例えば "**/*.yml" はリポジトリ直下のファイル（"/" を含まないパス）に
+    一切マッチしない。ここでは "**/" を「0個以上のディレクトリ」として扱う。
+    """
+    regex_parts = []
+    i = 0
+    while i < len(pattern):
+        if pattern[i:i + 3] == "**/":
+            regex_parts.append("(?:.*/)?")
+            i += 3
+        elif pattern[i:i + 2] == "**":
+            regex_parts.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            regex_parts.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            regex_parts.append("[^/]")
+            i += 1
+        else:
+            regex_parts.append(re.escape(pattern[i]))
+            i += 1
+    regex = "^" + "".join(regex_parts) + "$"
+    return re.match(regex, path) is not None
+
+
 def filter_files(files, include_globs, exclude_globs, max_files):
     result = []
     for f in files:
         path = f.filename
-        if include_globs and not any(fnmatch.fnmatch(path, p) for p in include_globs):
+        if include_globs and not any(glob_match(path, p) for p in include_globs):
             continue
-        if exclude_globs and any(fnmatch.fnmatch(path, p) for p in exclude_globs):
+        if exclude_globs and any(glob_match(path, p) for p in exclude_globs):
             continue
         if f.patch is None:
             logging.info("パッチが取得できないためスキップします（バイナリ/大容量ファイルの可能性）: %s", path)

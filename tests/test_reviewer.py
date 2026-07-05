@@ -5,6 +5,24 @@ from types import SimpleNamespace
 from src import reviewer
 
 
+class GlobMatchTests(unittest.TestCase):
+    def test_double_star_prefix_matches_repo_root_files(self):
+        # fnmatchでは "**/*.yml" が "/" を含まないパスに一切マッチしないバグの回帰テスト
+        self.assertTrue(reviewer.glob_match(".mergify.yml", "**/*.yml"))
+        self.assertTrue(reviewer.glob_match("config.yaml", "**/*.yaml"))
+
+    def test_double_star_prefix_matches_nested_files(self):
+        self.assertTrue(reviewer.glob_match(".github/dependabot.yml", "**/*.yml"))
+        self.assertTrue(reviewer.glob_match("src/config.yaml", "**/*.yaml"))
+
+    def test_double_star_directory_wildcard(self):
+        self.assertTrue(reviewer.glob_match("node_modules/x.lock", "**/node_modules/**"))
+        self.assertTrue(reviewer.glob_match("a/node_modules/x.lock", "**/node_modules/**"))
+
+    def test_non_matching_extension(self):
+        self.assertFalse(reviewer.glob_match("requirements.txt", "**/*.py"))
+
+
 class DedupExistingTests(unittest.TestCase):
     def test_fallback_body_is_deduped_when_full_header_matches(self):
         fallback_body = "### 🤖 AIレビューBot（行特定不可の指摘）\n\n- test"
