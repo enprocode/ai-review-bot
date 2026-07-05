@@ -59,10 +59,8 @@ def extract_output_text(resp: Any) -> str:
     return ""
 
 
-def load_config() -> dict:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    cfg_path = os.path.join(base_dir, "config.yaml")
-    with open(cfg_path, "r", encoding="utf-8") as f:
+def _load_yaml_file(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
         raw = f.read()
     expanded = os.path.expandvars(raw)
     cfg = yaml.safe_load(expanded) or {}
@@ -71,6 +69,19 @@ def load_config() -> dict:
         val = cfg.get(key)
         if isinstance(val, str) and re.fullmatch(r"\$\{[^}]+\}", val.strip()):
             cfg[key] = None
+    return cfg
+
+
+def load_config(override_path: Optional[str] = None) -> dict:
+    """
+    ベースは常に src/config.yaml（このBotのデフォルト設定）。
+    override_path が指定・存在する場合、そのファイルのキーで上書きする
+    （呼び出し元リポジトリごとにmodel/fail_level/globs等をカスタマイズするため）。
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    cfg = _load_yaml_file(os.path.join(base_dir, "config.yaml"))
+    if override_path and os.path.isfile(override_path):
+        cfg.update(_load_yaml_file(override_path))
     return cfg
 
 
@@ -815,9 +826,11 @@ def main():
     parser.add_argument("--repo", required=True)
     parser.add_argument("--pr", required=True)
     parser.add_argument("--prompt", default="")
+    parser.add_argument("--config-override", default="",
+                        help="呼び出し元リポジトリのconfig上書きファイルへのパス（存在する場合のみ適用）")
     args = parser.parse_args()
 
-    cfg = load_config()
+    cfg = load_config(args.config_override or None)
     log_level_name = str(cfg.get("log_level") or "INFO").upper()
     log_level = getattr(logging, log_level_name, logging.INFO)
     logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")

@@ -11,10 +11,12 @@
 
 ## ワークフロー構成
 
-- [`self-ai-review.yml`](../.github/workflows/self-ai-review.yml) — トリガー役。ユニットテスト実行後、draft/フォークPR/Dependabotを除外して再利用ワークフローを呼び出します。
-- [`ai-review.yml`](../.github/workflows/ai-review.yml) — 実処理（`workflow_call`）。`src/reviewer.py` を1回実行し、GitHub Appトークンでコメントを投稿します。`secrets: inherit` は使わず必要なシークレットのみ渡す設計です。
+- [`self-ai-review.yml`](../.github/workflows/self-ai-review.yml) — このリポジトリ自身専用のトリガー役。ユニットテスト実行後、draft/フォークPR/Dependabotを除外して再利用ワークフローを呼び出します。
+- [`ai-review.yml`](../.github/workflows/ai-review.yml) — 実処理（`workflow_call`）。呼び出し元とは別に `enprocode/ai-review-bot` 自体をcheckoutして `src/reviewer.py` を1回実行し、GitHub Appトークンでコメントを投稿します。`secrets: inherit` は使わず必要なシークレットのみ渡す設計です。
 
-他リポジトリで使う場合は上記2ファイルをコピーし、`checkout` 対象とシークレット名を自リポジトリに合わせて調整してください。エントリポイントは単一の `src/reviewer.py`（`--repo` / `--pr` / `--prompt`）です。
+`ai-review.yml` は他リポジトリからの直接参照（`uses: enprocode/ai-review-bot/.github/workflows/ai-review.yml@<tag>`）を前提に設計されています。呼び出し元は `src/` や `ai-review.yml` 自体をコピーする必要はなく、[`examples/caller-workflow.yml`](../examples/caller-workflow.yml) のような薄いワークフロー1枚だけで動作します。エントリポイントは単一の `src/reviewer.py`（`--repo` / `--pr` / `--prompt` / `--config-override`）です。
+
+設定はデフォルトで `enprocode/ai-review-bot` 側の `src/config.yaml` を全呼び出し元で共有します。呼び出し元リポジトリごとにモデル・`fail_level`・対象globなどを変えたい場合は、`with.config_path` で自リポジトリ内の上書きファイルを指定してください（[`examples/ai-review-config.example.yml`](../examples/ai-review-config.example.yml) 参照、詳細は [設定リファレンス](configuration.md)）。`caller` パスにcheckoutされた呼び出し元リポジトリ内のファイルを `load_config()` がマージします。
 
 ## 安全な運用ポイント
 

@@ -10,6 +10,11 @@ on:
       pr_number:
         required: false
         type: string
+      config_path:
+        description: "呼び出し元リポジトリ内の設定上書きファイルへの相対パス（例: .github/ai-review-config.yml）。未指定ならBot既定の設定を使用"
+        required: false
+        type: string
+        default: ""
     secrets:
       LLM_API_KEY:
         required: false
@@ -75,6 +80,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           REVIEW_PROMPT: ${{ inputs.review_prompt }}
+          CONFIG_PATH_INPUT: ${{ inputs.config_path }}
         run: |
           set -euo pipefail
           PR_NUMBER="${{ inputs.pr_number }}"
@@ -86,7 +92,13 @@ jobs:
             exit 1
           fi
 
+          CONFIG_OVERRIDE=""
+          if [ -n "$CONFIG_PATH_INPUT" ]; then
+            CONFIG_OVERRIDE="caller/${CONFIG_PATH_INPUT}"
+          fi
+
           python ai-review-bot/src/reviewer.py \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
-            --prompt "$REVIEW_PROMPT"
+            --prompt "$REVIEW_PROMPT" \
+            --config-override "$CONFIG_OVERRIDE"
