@@ -856,6 +856,8 @@ def main():
     parser.add_argument("--prompt", default="")
     parser.add_argument("--config-override", default="",
                         help="呼び出し元リポジトリのconfig上書きファイルへのパス（存在する場合のみ適用）")
+    parser.add_argument("--language", default="",
+                        help="レビューコメントの言語。指定時はconfig.yamlのlanguageより優先される")
     args = parser.parse_args()
 
     cfg = load_config(args.config_override or None)
@@ -930,7 +932,7 @@ def main():
 
     logging.info("レビュー対象ファイル数: %s (取得 %s, 上限 %s)", len(files), len(files_all), max_files)
 
-    language = (str(cfg.get("language") or "")).strip() or "日本語"
+    language = args.language.strip() or (str(cfg.get("language") or "")).strip() or "日本語"
     prompt_text = build_prompt(files, args.prompt, max_diff_chars, style=style or None,
                                max_findings=max_findings, language=language)
     # SDK内部リトライは1回に制限（Retry-Afterの長い待ちが多重リトライで膨らむのを防ぐ）

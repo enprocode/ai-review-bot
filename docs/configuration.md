@@ -45,6 +45,17 @@
 
 `llm_api_key` / `github_token` はSecrets経由で渡されるため、上書きファイルに書く必要はありません（書いても無視されます）。
 
+### `language` だけはワークフローの `with:` からも指定可能
+
+`language`（レビューコメントの言語）だけは利用頻度が高いため、上書きファイルを作らずに呼び出し元ワークフローの `with.language` で直接指定できます（[`examples/caller-workflow.yml`](../examples/caller-workflow.yml) 参照）。
+
+```yaml
+with:
+  language: English   # 例: English / 한국어。未指定なら config.yaml の設定（既定は日本語）
+```
+
+`with.language` は `config_path` で指定した上書きファイル内の `language` よりも優先されます。
+
 ## OpenAI以外のプロバイダを使う
 
 `base_url` にOpenAI互換エンドポイントを指定するだけで、OpenRouter / Azure OpenAI / Groq / Ollama 等が使えます。APIキーは `LLM_API_KEY` に使用プロバイダのものを設定してください。

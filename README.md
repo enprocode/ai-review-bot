@@ -56,7 +56,9 @@ jobs:
 
 ### 4. 必要なら設定を上書き（任意）
 
-自リポジトリに設定上書きファイル（例: `.github/ai-review-config.yml`）を作成し、手順1のワークフローに `with.config_path: .github/ai-review-config.yml` を追加すると、モデル・`fail_level`・対象ファイルglob等をリポジトリごとに変更できます（省略時はBot既定の設定を使用）。[`examples/ai-review-config.example.yml`](examples/ai-review-config.example.yml) も参照してください。
+レビューコメントの**言語**だけは手順1のワークフローに `with.language: English` のように直接指定できます（省略なら既定は日本語）。
+
+モデル・`fail_level`・対象ファイルglob等、それ以外の設定を変えたい場合は、自リポジトリに設定上書きファイル（例: `.github/ai-review-config.yml`）を作成し、手順1のワークフローに `with.config_path: .github/ai-review-config.yml` を追加してください（省略時はBot既定の設定を使用）。[`examples/ai-review-config.example.yml`](examples/ai-review-config.example.yml) も参照してください。
 
 ```yaml
 # .github/ai-review-config.yml の例（このリポジトリ向けだけの上書き）
