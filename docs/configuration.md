@@ -2,10 +2,11 @@
 
 ## Secrets（GitHub リポジトリ設定）
 
-| 名前 | 必須 | 説明 |
-|------|------|------|
-| `LLM_API_KEY` | ✅ | LLMのAPIキー。旧名 `OPENAI_API_KEY` も後方互換で利用可 |
-| `GH_APP_ID` / `GH_APP_PRIVATE_KEY` | 任意 | 独自のGitHub App名でコメントを投稿したい場合のみ設定。未設定なら標準の `GITHUB_TOKEN`（`github-actions[bot]`名義）で投稿するため、GitHub Appの作成・インストールは不要 |
+| 名前 | 説明 |
+|------|------|
+| `LLM_API_KEY` | LLMのAPIキー。旧名 `OPENAI_API_KEY` も後方互換で利用可 |
+
+コメントは標準の `GITHUB_TOKEN`（`github-actions[bot]`名義）で投稿するため、GitHub Appの作成・インストールは不要です。
 
 > フォークPRにはSecretsは渡されません（GitHub Actionsの仕様）。
 
