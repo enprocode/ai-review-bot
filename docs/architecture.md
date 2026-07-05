@@ -31,7 +31,7 @@
 ## 依存関係の自動更新
 
 - **Dependabot**（[設定](../.github/dependabot.yml)）: pip / GitHub Actions を毎週月曜9時（JST）にチェック。minor/patchは1つのPRにグループ化。
-- **Mergify**（[設定](../.mergify.yml)）: テスト通過したDependabot PRをマージキュー経由でsquash自動マージ。利用には [Mergify GitHub App](https://github.com/apps/mergify) のインストールが必要です。
+- **Mergify**（[設定](../.github/.mergify.yml)）: テスト通過したDependabot PRをマージキュー経由でsquash自動マージ。利用には [Mergify GitHub App](https://github.com/apps/mergify) のインストールが必要です。
 
 ## リリースの自動化
 
