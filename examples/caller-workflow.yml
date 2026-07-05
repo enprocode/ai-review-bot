@@ -24,6 +24,8 @@ jobs:
     with:
       # このリポジトリ固有の設定で上書きしたい場合のみ指定（省略可）
       config_path: .github/ai-review-config.yml
+      # レビューコメントの言語（省略可。例: English / 한국어。未指定なら日本語）
+      language: en   # ja/en/ko/zh/zh-tw/es/fr/de/pt/vi/id/th の短いコード、または正式名称も可
     secrets:
       # 必須はこれだけ。コメントは標準の GITHUB_TOKEN（github-actions[bot]）で投稿される
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}

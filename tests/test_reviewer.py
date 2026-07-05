@@ -126,6 +126,23 @@ class BuildPromptTests(unittest.TestCase):
                                        language="English")
         self.assertIn("必ずEnglishで記述してください", prompt)
 
+
+class ResolveLanguageTests(unittest.TestCase):
+    def test_known_short_codes_are_expanded(self):
+        self.assertEqual(reviewer.resolve_language("en"), "English")
+        self.assertEqual(reviewer.resolve_language("ja"), "日本語")
+        self.assertEqual(reviewer.resolve_language("ko"), "한국어")
+
+    def test_short_codes_are_case_insensitive(self):
+        self.assertEqual(reviewer.resolve_language("EN"), "English")
+
+    def test_unknown_value_passes_through_unchanged(self):
+        self.assertEqual(reviewer.resolve_language("日本語"), "日本語")
+        self.assertEqual(reviewer.resolve_language("Français"), "Français")
+
+    def test_surrounding_whitespace_is_stripped(self):
+        self.assertEqual(reviewer.resolve_language("  en  "), "English")
+
     def test_diff_is_truncated_when_overflow(self):
         long_patch = "+line\n" * 100
         file_stub = SimpleNamespace(filename="foo.py", patch=long_patch)
