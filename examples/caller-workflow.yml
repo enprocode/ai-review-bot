@@ -16,9 +16,11 @@ jobs:
   ai-review:
     # フォーク/Draft PRやDependabotは除外（Secretsが渡らない・渡すべきでないため）
     if: ${{ github.actor != 'dependabot[bot]' && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository }}
-    # バージョンはタグ（例: @1.1.0、vプレフィックスなし）かコミットSHAで固定することを推奨（@main は最新コミットを都度取得するため）
-    # 利用可能なタグ一覧: https://github.com/enprocode/ai-review-bot/tags
-    uses: enprocode/ai-review-bot/.github/workflows/ai-review.yml@1.1.0
+    # @1 はメジャーバージョンの浮動タグ。リリースのたびにメンテナが最新の1.x.xへ指し直すため、
+    # 設置後は書き換え不要で自動的にパッチ/マイナー更新を受け取れる（破壊的変更時のみメジャーが上がる）。
+    # ビルドを完全に固定したい場合はパッチバージョン（例: @1.1.0、vプレフィックスなし）かコミットSHAを指定
+    # （@main は最新コミットを都度取得するため非推奨）。利用可能なタグ一覧: https://github.com/enprocode/ai-review-bot/tags
+    uses: enprocode/ai-review-bot/.github/workflows/ai-review.yml@1
     with:
       # このリポジトリ固有の設定で上書きしたい場合のみ指定（省略可）
       config_path: .github/ai-review-config.yml
