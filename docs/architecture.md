@@ -33,6 +33,10 @@
 - **Dependabot**（[設定](../.github/dependabot.yml)）: pip / GitHub Actions を毎週月曜9時（JST）にチェック。minor/patchは1つのPRにグループ化。
 - **Mergify**（[設定](../.mergify.yml)）: テスト通過したDependabot PRをマージキュー経由でsquash自動マージ。利用には [Mergify GitHub App](https://github.com/apps/mergify) のインストールが必要です。
 
+## リリースの自動化
+
+[`VERSION`](../VERSION) ファイルの変更がmainにマージされると、[`release.yml`](../.github/workflows/release.yml) がパッチタグ作成・メジャー浮動タグ（`@1` 等）のforce-move・GitHub Release作成を自動で行います。手順や運用ルールは [開発ガイド](development.md#リリース手順メンテナ向け) を参照してください。
+
 ## 誤検知の抑制
 
 差分ベースレビューの典型的な誤検知（差分外のインポートや設定キーを「存在しない」と断定する、行の移動を削除と誤認する等）を防ぐため、2段階の対策を行っています。
