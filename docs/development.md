@@ -30,18 +30,17 @@ python src/reviewer.py --repo owner/repo --pr 123
 
 ## リリース手順（メンテナ向け）
 
-他リポジトリは `uses: enprocode/ai-review-bot/.github/workflows/ai-review.yml@1` のようにメジャーバージョンの浮動タグを参照する想定です（`actions/checkout@v4` などと同じ慣例）。リリースごとに以下の手順で固定タグとメジャー浮動タグの両方を更新してください。
+他リポジトリは `uses: enprocode/ai-review-bot/.github/workflows/ai-review.yml@1` のようにメジャーバージョンの浮動タグを参照する想定です（`actions/checkout@v4` などと同じ慣例）。リリースは [`VERSION`](../VERSION) ファイルとそれを検知する [`release.yml`](../.github/workflows/release.yml) で自動化されています。
 
-```bash
-# 1. semverでパッチ/マイナータグを作成（vプレフィックスなし。破壊的変更を含むリリースはメジャーを上げる）
-git tag 1.2.0 <mainのコミット>
-git push origin 1.2.0
+**手順は [`VERSION`](../VERSION) を書き換えてPRを作成・mainにマージするだけです。** マージ後、`release.yml` が自動で以下を行います。
 
-# 2. メジャー浮動タグを同じコミットに付け直す（force-move）
-git tag -f 1 <mainのコミット>
-git push origin 1 --force
-```
+1. `VERSION` の中身（semver、`v`プレフィックスなし。例: `1.2.0`）をパッチタグとして作成・push
+2. メジャー部分（例: `1.2.0` なら `1`）のタグを同じコミットへforce-moveしてpush
+3. GitHub Releaseを自動生成（リリースノートは前回タグとの差分から自動生成）
+
+同じバージョンのタグが既に存在する場合はスキップされるため、`VERSION` を上げ忘れたまま他の変更だけをマージしても誤って再リリースされることはありません。
 
 - `@1` を参照している呼び出し元は、次回のワークフロー実行時から自動的に新しいコードを使うようになる（呼び出し元は何もする必要がない）
-- 破壊的変更（inputs/secretsの削除・必須化、既定挙動の変更など）を含む場合は、既存の `@1` 利用者に影響が出るため、README/CHANGELOG等で事前告知した上でメジャーバージョンを上げる
+- 破壊的変更（inputs/secretsの削除・必須化、既定挙動の変更など）を含む場合は、既存の `@1` 利用者に影響が出るため、README/リリースノート等で事前告知した上で `VERSION` のメジャー部分を上げる
 - ピンポイントで固定したい利用者向けに、パッチタグ（例: `1.2.0`）は動かさず残しておく
+- `workflow_dispatch` で手動実行も可能（`VERSION` の値でタグ作成が行われる。緊急時やCI再実行用）
